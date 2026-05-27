@@ -1,0 +1,17 @@
+# SQLite database (too large / not meant for version control)
+nse_intraday.db
+*.db
+*.db-shm
+*.db-wal
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Virtual environment
+venv/
+.env/
+
+# Secrets / credentials
+key.json
+token.json
