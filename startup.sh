@@ -5,48 +5,53 @@
 PROJECT_DIR="/home/ramesh/newtrade"
 LOG_FILE="/home/ramesh/log/newtrade.log"
 PYTHON="python3 -u"
+PB_TOKEN="o.jf9XoTk0S42G4FkjfhD5PZFiLcWAbj9r"
 
 # ── Fresh log on every startup (no cross-reboot accumulation) ─────────────────
 > "$LOG_FILE"
 exec >> "$LOG_FILE" 2>&1
 
+# ── Helpers ───────────────────────────────────────────────────────────────────
+push() {
+    local title="$1" body="$2"
+    curl -s -u "${PB_TOKEN}:" https://api.pushbullet.com/v2/pushes \
+        -d type=note \
+        --data-urlencode "title=${title}" \
+        --data-urlencode "body=${body}" \
+        -o /dev/null || true
+}
+
+ts()  { date '+%Y-%m-%d %H:%M:%S'; }
+log() { echo "$(ts) - $*"; }
+
 # ── Network check ──────────────────────────────────────────────────────────────
 ping_with_retry() {
-    local host="$1"
-    local attempts=5
-    local delay=15
-
+    local host="$1" attempts=5 delay=15
     while [[ $attempts -gt 0 ]]; do
-        ping -c 1 -q "$host" > /dev/null 2>&1
-        if [[ $? -eq 0 ]]; then
-            echo "$(date '+%Y-%m-%d %H:%M:%S') - Network OK (ping $host succeeded)."
+        ping -c 1 -q "$host" > /dev/null 2>&1 && {
+            log "Network OK (ping $host succeeded)."
             return 0
-        fi
-        attempts=$((attempts - 1))
-        echo "$(date '+%Y-%m-%d %H:%M:%S') - Ping $host failed. Retrying in ${delay}s ($attempts attempts left)..."
+        }
+        attempts=$((attempts-1))
+        log "Ping $host failed. Retrying in ${delay}s ($attempts left)..."
         sleep "$delay"
     done
-
-    echo "$(date '+%Y-%m-%d %H:%M:%S') - Network unreachable after retries. Aborting."
+    log "Network unreachable after retries. Aborting."
     return 1
 }
 
-# ── Daemon wrapper — auto-restarts on crash, stops cleanly on success ──────────
+# ── Daemon wrapper ─────────────────────────────────────────────────────────────
 start_daemon() {
-    local script="$1"
-    local restart_delay="${2:-10}"
-
-    echo "$(date '+%Y-%m-%d %H:%M:%S') - Starting $script ..."
-
+    local script="$1" restart_delay="${2:-10}"
+    log "Starting $script ..."
     while true; do
         $PYTHON "$PROJECT_DIR/$script"
-        exit_status=$?
-
-        if [[ $exit_status -eq 0 ]]; then
-            echo "$(date '+%Y-%m-%d %H:%M:%S') - $script finished cleanly (exit 0). Not restarting."
+        local rc=$?
+        if [[ $rc -eq 0 ]]; then
+            log "$script finished cleanly (exit 0). Not restarting."
             break
         else
-            echo "$(date '+%Y-%m-%d %H:%M:%S') - $script crashed (exit $exit_status). Restarting in ${restart_delay}s..."
+            log "$script crashed (exit $rc). Restarting in ${restart_delay}s..."
             sleep "$restart_delay"
         fi
     done
@@ -54,40 +59,61 @@ start_daemon() {
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 echo "========================================================"
-echo "$(date '+%Y-%m-%d %H:%M:%S') - newtrade startup begins"
+log "newtrade startup begins"
 echo "========================================================"
 
 # 1. Wait for network
 if ! ping_with_retry "www.nseindia.com"; then
+    push "❌ NSE Startup Failed" "$(ts) — Network unreachable. System NOT running."
     exit 1
 fi
 
-# 2. Go to project directory
-cd "$PROJECT_DIR" || { echo "ERROR: cannot cd to $PROJECT_DIR"; exit 1; }
+# 2. cd to project
+cd "$PROJECT_DIR" || { log "ERROR: cannot cd to $PROJECT_DIR"; exit 1; }
 
-# 3. Pull latest code
-echo "$(date '+%Y-%m-%d %H:%M:%S') - Pulling latest code ..."
-git pull
-echo "$(date '+%Y-%m-%d %H:%M:%S') - git pull done."
+# 3. git pull
+log "Pulling latest code ..."
+GIT_OUT=$(git pull 2>&1); GIT_EXIT=$?
+echo "$GIT_OUT"
+log "git pull done (exit $GIT_EXIT)."
+GIT_STATUS=$( [[ $GIT_EXIT -eq 0 ]] && echo "✓ $(echo "$GIT_OUT" | grep -v '^$' | tail -1)" || echo "✗ failed (exit $GIT_EXIT)" )
 
-# 4. Install / upgrade any new dependencies
-echo "$(date '+%Y-%m-%d %H:%M:%S') - Installing dependencies ..."
-pip install -q -r "$PROJECT_DIR/requirements.txt"
-echo "$(date '+%Y-%m-%d %H:%M:%S') - pip install done."
+# 4. pip install
+log "Installing dependencies ..."
+pip install -q -r "$PROJECT_DIR/requirements.txt" >> "$LOG_FILE" 2>&1
+PIP_EXIT=$?; PIP_STATUS=$( [[ $PIP_EXIT -eq 0 ]] && echo "✓" || echo "✗ exit $PIP_EXIT" )
+log "pip install done (exit $PIP_EXIT)."
 
-# 5. Refresh symbol metadata once (52wk high/low, fundamentals, avg volumes)
-echo "$(date '+%Y-%m-%d %H:%M:%S') - Running symbol_info (one-time refresh) ..."
+# 5. symbol_info
+log "Running symbol_info ..."
 $PYTHON "$PROJECT_DIR/symbol_info.py"
-echo "$(date '+%Y-%m-%d %H:%M:%S') - symbol_info done."
+SYM_EXIT=$?; SYM_STATUS=$( [[ $SYM_EXIT -eq 0 ]] && echo "✓" || echo "✗ exit $SYM_EXIT" )
+log "symbol_info done (exit $SYM_EXIT)."
 
-# 6. Web dashboard — standalone Flask on port 8080 (daemon, restarts on crash)
+# 6. Web server
 start_daemon "web_server.py" 10 &
 
-# 7. Intraday bar collector + push notifier
-#    exits cleanly at market close (15:35) — not restarted
+# 7. main_startup.py
 start_daemon "main_startup.py" 30 &
+MAIN_PID=$!
 
-# Wait for all background jobs
+# ── Single push: system status ────────────────────────────────────────────────
+sleep 5
+if kill -0 $MAIN_PID 2>/dev/null; then
+    push "✅ NSE System Live" \
+"Time        : $(ts)
+git pull    : $GIT_STATUS
+pip install : $PIP_STATUS
+symbol_info : $SYM_STATUS
+main_startup: running (PID $MAIN_PID)"
+else
+    push "❌ NSE Startup Failed" \
+"Time        : $(ts)
+git pull    : $GIT_STATUS
+pip install : $PIP_STATUS
+symbol_info : $SYM_STATUS
+main_startup: CRASHED — check log"
+fi
+
 wait
-
-echo "$(date '+%Y-%m-%d %H:%M:%S') - newtrade startup exited."
+log "newtrade startup exited."
