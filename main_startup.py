@@ -2,7 +2,6 @@ import time
 import datetime
 from fetchday import fetch_and_store
 from db_setup import ensure_table, ensure_symbol_info_table, purge_old_data
-from symbol_info import update_symbol_info
 
 # ── market window ─────────────────────────────────────────────────────────────
 MARKET_OPEN  = (9,  15)   # 09:15
@@ -21,9 +20,8 @@ def main():
 
     # ── one-time DB init ──────────────────────────────────────────────────────
     ensure_table()              # create bars table if not exists
-    ensure_symbol_info_table()  # create symbol_info table if not exists
+    ensure_symbol_info_table()  # create symbol_info table if not exists (no-op if exists)
     purge_old_data()            # drop rows older than 375 days (TTL equivalent)
-    update_symbol_info()        # refresh 52wk high/low + fundamentals in nse_intraday.db
 
     print("=" * 50)
     print("  NSE Intraday Bar Collector  [SQLite]")
