@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>NSE — Push Notifications</title>
+  <link rel="stylesheet" href="{{ prefix }}/nse.css">
+</head>
+<body>
+<nav>
+  <div class="brand">📈 NSE Dashboard</div>
+  <div class="nav-links">
+    <a href="{{ prefix }}/">Overview</a>
+    <a href="{{ prefix }}/bigplayer">⚡ Big Player</a>
+    <a href="{{ prefix }}/pushlog" class="on">🔔 Pushes</a>
+    <a href="{{ prefix }}/log">📋 Log</a>
+  </div>
+  <div class="nav-r"><span id="mbadge"></span><span id="cd" class="sub"></span></div>
+</nav>
+<main>
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
+    <div class="sec-title" style="margin:0">🔔 Push Notifications — Today</div>
+    <span class="cnt-badge" id="cnt">—</span>
+    <span class="sub" style="font-size:11px">Auto-refresh every 30s &nbsp;·&nbsp; Cleared each startup</span>
+    <span id="asof" class="sub" style="margin-left:auto;font-size:11px"></span>
+  </div>
+  <div id="push-list" class="push-list"></div>
+</main>
+
+<script>
+const BASE = "{{ prefix }}";
+let cd = 30;
+
+function colorBody(text) {
+  const e = s => s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  return e(text)
+    .replace(/(🟢[^\n]*BUY[^\n]*)/g,  '<span class="buy">$1</span>')
+    .replace(/(🔴[^\n]*SELL[^\n]*)/g, '<span class="sell">$1</span>');
+}
+
+async function load() {
+  const d      = await fetch(BASE+'/api/pushlog').then(r=>r.json()).catch(()=>({pushes:[]}));
+  const list   = document.getElementById('push-list');
+  const pushes = d.pushes || [];
+
+  document.getElementById('cnt').textContent  = pushes.length+' push'+(pushes.length!==1?'es':'');
+  document.getElementById('asof').textContent = 'Updated '+(d.as_of||'').substring(11,19)+' IST';
+  document.getElementById('mbadge').innerHTML = d.market_open
+    ? '<span class="badge live"><span class="dot"></span>LIVE</span>'
+    : '<span class="badge closed">CLOSED</span>';
+
+  if (!pushes.length) {
+    list.innerHTML = '<div class="empty">No push notifications yet today.<br><span style="font-size:12px">They appear here when the top-6 big player positions change.</span></div>';
+    return;
+  }
+
+  list.innerHTML = pushes.map((p, i) => {
+    const timeStr  = (p.sent_at||'').substring(11,19);
+    const dateStr  = (p.sent_at||'').substring(0,10);
+    const isLatest = i === 0;
+    return `<div class="push-card">
+      <div class="push-time">
+        ${isLatest ? '<span class="latest-dot"></span><span style="color:var(--blu);font-weight:600">Latest</span>' : ''}
+        <span>${dateStr} &nbsp;<b>${timeStr}</b> IST</span>
+        <span class="sub">#${pushes.length - i}</span>
+      </div>
+      <div class="push-title">${p.title}</div>
+      <div class="push-body">${colorBody(p.body)}</div>
+    </div>`;
+  }).join('');
+  cd = 30;
+}
+
+function tick() { cd--; document.getElementById('cd').textContent=cd+'s'; if(cd<=0) load(); }
+load();
+setInterval(tick, 1000);
+</script>
+</body>
+</html>

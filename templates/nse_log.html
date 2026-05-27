@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>NSE — Startup Log</title>
+  <link rel="stylesheet" href="{{ prefix }}/nse.css">
+</head>
+<body>
+<nav>
+  <div class="brand">📈 NSE Dashboard</div>
+  <div class="nav-links">
+    <a href="{{ prefix }}/">Overview</a>
+    <a href="{{ prefix }}/bigplayer">⚡ Big Player</a>
+    <a href="{{ prefix }}/pushlog">🔔 Pushes</a>
+    <a href="{{ prefix }}/log" class="on">📋 Log</a>
+  </div>
+  <div class="nav-r"><span id="cd" class="sub"></span></div>
+</nav>
+<main>
+  <div class="log-meta">
+    <span class="sub" id="meta-info">Loading…</span>
+    <a class="btn btn-dl" href="{{ prefix }}/log/download" download="newtrade.log">⬇ Download full log</a>
+    <label class="tail-toggle">
+      <input type="checkbox" id="tail-chk" checked onchange="toggleTail()"> Auto-scroll to bottom
+    </label>
+    <label class="tail-toggle">
+      <input type="checkbox" id="refresh-chk" checked> Auto-refresh
+      <span id="cd2" class="sub" style="margin-left:4px"></span>
+    </label>
+  </div>
+  <div class="term" id="log-box"></div>
+</main>
+
+<script>
+const BASE = "{{ prefix }}";
+let cd = 10, autoScroll = true;
+
+function colorLine(line) {
+  const e = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const tsMatch = line.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) - (.*)/s);
+  if (tsMatch) {
+    const ts   = e(tsMatch[1]);
+    const rest = tsMatch[2];
+    const rl   = rest.toLowerCase();
+    let cls = '';
+    if (rl.includes('error')||rl.includes('crash')||rl.includes('failed')||rl.includes('traceback')||rl.includes('exception')) cls='ln-err';
+    else if (rl.includes('warn'))                                                          cls='ln-warn';
+    else if (rl.includes('done')||rl.includes('ok')||rl.includes('success')||rl.includes('finished')) cls='ln-ok';
+    else if (rl.includes('start')||rl.includes('pull')||rl.includes('install')||rl.includes('running')) cls='ln-info';
+    else if (rl.includes('restarting'))                                                    cls='ln-warn';
+    return `<span class="ln-time">${ts} - </span><span class="${cls}">${e(rest)}</span>`;
+  }
+  if (line.startsWith('==='))                                         return `<span class="ln-head">${e(line)}</span>`;
+  if (line.toLowerCase().includes('already satisfied')||line.toLowerCase().startsWith('requirement')) return `<span class="ln-pip">${e(line)}</span>`;
+  if (line.toLowerCase().includes('error')||line.toLowerCase().includes('traceback')||line.toLowerCase().includes('exception')||line.toLowerCase().startsWith('  file ')) return `<span class="ln-err">${e(line)}</span>`;
+  if (line.toLowerCase().includes('warning'))                         return `<span class="ln-warn">${e(line)}</span>`;
+  return e(line);
+}
+
+async function load() {
+  try {
+    const d   = await fetch(BASE+'/api/log').then(r=>r.json());
+    const box = document.getElementById('log-box');
+    box.innerHTML = d.lines.map(colorLine).join('\n');
+    document.getElementById('meta-info').textContent =
+      `${d.total_lines} lines · ${d.size_kb} KB · Log: ${d.log_path} · Startup: ${d.started_at||'—'}`;
+    if (autoScroll) box.scrollTop = box.scrollHeight;
+  } catch(e) { document.getElementById('log-box').textContent = 'Error loading log: '+e; }
+  cd = 10;
+}
+
+function toggleTail() { autoScroll = document.getElementById('tail-chk').checked; }
+
+function tick() {
+  cd--;
+  const r = document.getElementById('refresh-chk').checked;
+  document.getElementById('cd2').textContent = r ? cd+'s' : '';
+  document.getElementById('cd').textContent  = r ? 'Refresh in '+cd+'s' : '';
+  if (r && cd<=0) load();
+}
+
+load();
+setInterval(tick, 1000);
+</script>
+</body>
+</html>

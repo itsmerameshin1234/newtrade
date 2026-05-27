@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>NSE — Big Player Watch</title>
+  <link rel="stylesheet" href="{{ prefix }}/nse.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+</head>
+<body>
+<nav>
+  <div class="brand">📈 NSE Dashboard</div>
+  <div class="nav-links">
+    <a href="{{ prefix }}/">Overview</a>
+    <a href="{{ prefix }}/bigplayer" class="on">⚡ Big Player</a>
+    <a href="{{ prefix }}/pushlog">🔔 Pushes</a>
+    <a href="{{ prefix }}/log">📋 Log</a>
+  </div>
+  <div class="nav-r">
+    <span id="mbadge"></span>
+    <span id="asof" class="sub"></span>
+    <span id="cd" class="sub"></span>
+  </div>
+</nav>
+<main>
+  <div class="cards">
+    <div class="card"><div class="clbl">Big Buy ₹Cr</div><div class="cval green" id="c0">—</div><div class="csub" id="c0s">— bars</div></div>
+    <div class="card"><div class="clbl">Big Sell ₹Cr</div><div class="cval red"   id="c1">—</div><div class="csub" id="c1s">— bars</div></div>
+    <div class="card"><div class="clbl">Net Flow ₹Cr</div><div class="cval"       id="c2">—</div></div>
+    <div class="card"><div class="clbl">Market Bias</div><div class="cval"        id="c3">—</div></div>
+    <div class="card"><div class="clbl">History</div><div class="cval blue"       id="c4">—</div><div class="csub">trading days</div></div>
+  </div>
+
+  <div id="banner" class="banner" style="display:none">
+    <span>📊</span><span id="btext"></span>
+    <div class="prog-bg"><div class="prog-fill" id="bprog"></div></div>
+  </div>
+
+  <div id="alert-sec" style="display:none">
+    <div class="sec-title">⚡ Unusual Activity — Spike vs 10d Average</div>
+    <div class="alerts" id="alerts"></div>
+  </div>
+
+  <div class="grid2">
+    <div class="sec">
+      <div class="sec-title">Intraday Big Order Flow — ₹Cr per Minute</div>
+      <div style="position:relative;height:220px"><canvas id="fc"></canvas></div>
+    </div>
+    <div class="sec">
+      <div class="sec-title">Cumulative Net Flow — Top Symbols
+        <span class="sub" style="font-weight:400;font-size:11px">(rising=accumulation, falling=distribution)</span>
+      </div>
+      <div style="position:relative;height:220px"><canvas id="cc"></canvas></div>
+    </div>
+  </div>
+
+  <div class="sec">
+    <div class="sec-title">Top 20 Symbols — Big Order Buy vs Sell ₹Cr</div>
+    <div style="position:relative;height:280px"><canvas id="sc"></canvas></div>
+  </div>
+
+  <div class="sec">
+    <div class="toolbar">
+      <div class="sec-title" style="margin:0">1Cr+ Order Details</div>
+      <input type="text" id="q" placeholder="Filter symbol…" oninput="filt()">
+    </div>
+    <div style="overflow-x:auto">
+      <table><thead><tr>
+        <th>Symbol</th>
+        <th>Big Bars</th><th>Buy ₹Cr</th><th>Sell ₹Cr</th>
+        <th>Net ₹Cr</th><th>Bias</th>
+        <th>10d Avg ₹Cr</th><th>Spike</th><th>Buy / Sell Split</th>
+      </tr></thead><tbody id="tb"></tbody></table>
+    </div>
+  </div>
+</main>
+
+<!-- ── Symbol Chart Modal ───────────────────────────────────────────────── -->
+<div class="ov" id="ov" onclick="cmClose(event)">
+  <div class="modal">
+    <div class="mhdr">
+      <div style="min-width:0">
+        <span id="msym" style="font-size:17px;font-weight:700"></span>
+        <span id="mname" class="sub" style="font-size:11px;margin-left:8px"></span>
+      </div>
+      <div class="tf-bar" id="tf-bar">
+        <button class="tf-btn tf-act" id="tf-1"   onclick="setTF(1)">1D</button>
+        <button class="tf-btn"         id="tf-5"   onclick="setTF(5)">5D</button>
+        <button class="tf-btn"         id="tf-30"  onclick="setTF(30)">1M</button>
+        <button class="tf-btn"         id="tf-90"  onclick="setTF(90)">3M</button>
+        <button class="tf-btn"         id="tf-180" onclick="setTF(180)">6M</button>
+        <button class="tf-btn"         id="tf-365" onclick="setTF(365)">1Y</button>
+      </div>
+      <div style="display:flex;gap:4px;align-items:center">
+        <button class="tf-btn" onclick="zoomChart(1.3)"  title="Zoom In">🔍+</button>
+        <button class="tf-btn" onclick="zoomChart(0.75)" title="Zoom Out">🔍−</button>
+        <button class="tf-btn" onclick="resetChartZoom()" title="Reset Zoom">↺ Reset</button>
+        <span class="mx" onclick="cmClose()">✕</span>
+      </div>
+    </div>
+    <div class="chart-hint">🖱 Scroll to zoom · Click+Drag to pan · 🟢 = 1Cr+ Buy &nbsp;·&nbsp; 🔴 = 1Cr+ Sell</div>
+    <div style="position:relative;height:290px"><canvas id="mc"></canvas></div>
+    <div class="chart-sep"></div>
+    <div class="vol-lbl">Volume</div>
+    <div style="position:relative;height:100px"><canvas id="mvc"></canvas></div>
+    <div class="mstats" id="mstats"></div>
+  </div>
+</div>
+
+<script>
+const BASE   = "{{ prefix }}";
+const COLORS = {{ colors|tojson }};
+let bpAll=[], fc=null, cc=null, sc=null, mc=null, mvc=null, curSym=null, curDays=1, cd=60;
+
+const f  = (v,d=2) => v==null ? '—' : Number(v).toLocaleString('en-IN',{minimumFractionDigits:d,maximumFractionDigits:d});
+const fv = v => { if(!v) return '—'; if(v>=1e7) return (v/1e7).toFixed(2)+'Cr'; if(v>=1e5) return (v/1e5).toFixed(1)+'L'; return v.toLocaleString('en-IN'); };
+const tl = iso => iso ? iso.substring(11,16) : '';
+
+// ── Page load ────────────────────────────────────────────────────────────────
+async function load() {
+  const d = await fetch(BASE+'/api/bigplayer').then(r=>r.json()).catch(()=>({}));
+  render(d);
+  document.getElementById('mbadge').innerHTML = d.market_open
+    ? '<span class="badge live"><span class="dot"></span>LIVE</span>'
+    : '<span class="badge closed">CLOSED</span>';
+  document.getElementById('asof').textContent = 'Updated '+(d.as_of||'').substring(11,19)+' IST';
+  cd = 60;
+}
+
+function render(d) {
+  bpAll = d.today || [];
+  const totBuy  = bpAll.reduce((s,r)=>s+(r.buy_cr||0),0);
+  const totSell = bpAll.reduce((s,r)=>s+(r.sell_cr||0),0);
+  const totBB   = bpAll.reduce((s,r)=>s+(r.buy_bars||0),0);
+  const totSB   = bpAll.reduce((s,r)=>s+(r.sell_bars||0),0);
+  const net     = totBuy - totSell;
+
+  document.getElementById('c0').textContent  = '₹'+f(totBuy);
+  document.getElementById('c1').textContent  = '₹'+f(totSell);
+  document.getElementById('c0s').textContent = totBB+' buy bars';
+  document.getElementById('c1s').textContent = totSB+' sell bars';
+  const n = document.getElementById('c2');
+  n.className = 'cval '+(net>0?'green':net<0?'red':'sub');
+  n.textContent = (net>0?'+':'')+f(net);
+  const b = document.getElementById('c3');
+  if (net>0)      { b.className='cval green'; b.textContent='BUYING';  }
+  else if (net<0) { b.className='cval red';   b.textContent='SELLING'; }
+  else            { b.className='cval sub';   b.textContent='NEUTRAL'; }
+  document.getElementById('c4').textContent = (d.hist_days||0)+'/10';
+
+  // Baseline banner
+  const hd = d.hist_days || 0;
+  const bn = document.getElementById('banner');
+  if (hd < 10) {
+    bn.style.display = 'flex';
+    document.getElementById('btext').textContent = hd===0
+      ? 'Day 1 — Building baseline. Spike comparison available from Day 2.'
+      : `Baseline: ${hd}/10 trading days. ${hd>=2?'Spike ratios active.':'Spike comparison available tomorrow.'}`;
+    document.getElementById('bprog').style.width = (hd/10*100)+'%';
+  } else { bn.style.display='none'; }
+
+  // Spike alerts
+  const spikes = (bpAll.filter(r=>r.spike_ratio&&r.spike_ratio>=1.5)).sort((a,b)=>b.spike_ratio-a.spike_ratio);
+  const asec = document.getElementById('alert-sec');
+  if (spikes.length) {
+    asec.style.display = 'block';
+    document.getElementById('alerts').innerHTML = spikes.map(r => {
+      const dir  = r.net_cr>0?'ac-buy':r.net_cr<0?'ac-sell':'';
+      const dtag = r.net_cr>0?'<span class="tag tbuy">BUY</span>':r.net_cr<0?'<span class="tag tsell">SELL</span>':'';
+      const scls = r.spike_ratio>=3?'spk-hi':'spk-md';
+      return `<div class="ac ${dir}" onclick="openModal('${r.symbol}')">
+        <div style="font-weight:700">${r.symbol}</div>
+        <div class="sub" style="font-size:11px;margin:2px 0">₹${f(r.total_cr)} Cr</div>
+        <span class="${scls}">${r.spike_ratio}× avg</span> ${dtag}
+      </div>`;
+    }).join('');
+  } else { asec.style.display='none'; }
+
+  // ── Intraday flow chart ──────────────────────────────────────────────────
+  const tl_data = d.timeline || [];
+  if (fc) fc.destroy();
+  fc = new Chart(document.getElementById('fc'), {
+    type: 'bar',
+    data: {
+      labels: tl_data.map(r=>tl(r.t)),
+      datasets: [
+        { label:'Buy ₹Cr',  data:tl_data.map(r=>r.buy_cr),  backgroundColor:'rgba(63,185,80,.4)', borderColor:'#3fb950',borderWidth:1 },
+        { label:'Sell ₹Cr', data:tl_data.map(r=>r.sell_cr), backgroundColor:'rgba(248,81,73,.4)', borderColor:'#f85149',borderWidth:1 },
+      ]
+    },
+    options: {
+      responsive:true, maintainAspectRatio:false, animation:false,
+      plugins: { legend:{labels:{color:'#e6edf3',font:{size:11}}}, tooltip:{mode:'index',intersect:false} },
+      scales: {
+        x: { ticks:{color:'#8b949e',maxTicksLimit:18,font:{size:10}}, grid:{color:'#21262d'} },
+        y: { ticks:{color:'#8b949e',font:{size:10}}, grid:{color:'#21262d'},
+             title:{display:true,text:'₹ Cr',color:'#8b949e',font:{size:10}} }
+      }
+    }
+  });
+
+  // ── Cumulative net flow chart ────────────────────────────────────────────
+  const cf   = d.cum_flows || {};
+  const syms = Object.keys(cf);
+  const allTs = [...new Set(Object.values(cf).flat().map(p=>p[0]))].sort();
+  if (cc) cc.destroy();
+  cc = new Chart(document.getElementById('cc'), {
+    type: 'line',
+    data: {
+      labels: allTs.map(tl),
+      datasets: syms.map((sym,i) => {
+        const m = Object.fromEntries(cf[sym].map(p=>[p[0],p[1]]));
+        return { label:sym, data:allTs.map(t=>m[t]??null),
+                 borderColor:COLORS[i%COLORS.length], backgroundColor:'transparent',
+                 borderWidth:1.5, pointRadius:0, spanGaps:true, tension:.2 };
+      })
+    },
+    options: {
+      responsive:true, maintainAspectRatio:false, animation:false,
+      plugins: { legend:{labels:{color:'#e6edf3',font:{size:10},boxWidth:10}}, tooltip:{mode:'index',intersect:false} },
+      scales: {
+        x: { ticks:{color:'#8b949e',maxTicksLimit:18,font:{size:10}}, grid:{color:'#21262d'} },
+        y: { ticks:{color:'#8b949e',font:{size:10}}, grid:{color:'#21262d'},
+             title:{display:true,text:'Cumulative ₹Cr',color:'#8b949e',font:{size:10}} }
+      }
+    }
+  });
+
+  // ── Top-20 grouped bar chart ─────────────────────────────────────────────
+  const top = bpAll.slice(0,20);
+  if (sc) sc.destroy();
+  sc = new Chart(document.getElementById('sc'), {
+    type: 'bar',
+    data: {
+      labels: top.map(r=>r.symbol),
+      datasets: [
+        { label:'Buy ₹Cr',  data:top.map(r=>r.buy_cr),  backgroundColor:'rgba(63,185,80,.5)', borderColor:'#3fb950',borderWidth:1 },
+        { label:'Sell ₹Cr', data:top.map(r=>r.sell_cr), backgroundColor:'rgba(248,81,73,.5)', borderColor:'#f85149',borderWidth:1 },
+      ]
+    },
+    options: {
+      responsive:true, maintainAspectRatio:false, animation:false,
+      plugins: { legend:{labels:{color:'#e6edf3',font:{size:11}}}, tooltip:{mode:'index',intersect:false} },
+      scales: {
+        x: { ticks:{color:'#8b949e',font:{size:10}}, grid:{color:'#21262d'} },
+        y: { ticks:{color:'#8b949e',font:{size:10}}, grid:{color:'#21262d'},
+             title:{display:true,text:'₹ Cr',color:'#8b949e',font:{size:10}} }
+      }
+    }
+  });
+
+  filt();
+}
+
+function filt() {
+  const q = document.getElementById('q').value.toLowerCase();
+  const rows = q ? bpAll.filter(r=>(r.symbol||'').toLowerCase().includes(q)) : bpAll;
+  document.getElementById('tb').innerHTML = rows.map(r => {
+    const net  = r.net_cr || 0;
+    const bias = net>0 ? '<span class="tag tbuy">BUY</span>' : net<0 ? '<span class="tag tsell">SELL</span>' : '<span class="tag tneut">NEUTRAL</span>';
+    let spk = '<span class="sub">—</span>';
+    if (r.spike_ratio != null) {
+      spk = r.spike_ratio>=3 ? `<span class="spk-hi">${r.spike_ratio}×</span>`
+          : r.spike_ratio>=1.5 ? `<span class="spk-md">${r.spike_ratio}×</span>`
+          : `<span class="sub">${r.spike_ratio}×</span>`;
+    }
+    const tot = (r.buy_cr||0)+(r.sell_cr||0);
+    const bw  = tot ? Math.round((r.buy_cr||0)/tot*100) : 50;
+    const sw  = 100-bw;
+    return `<tr>
+      <td><span class="sym" onclick="openModal('${r.symbol}')">${r.symbol}</span></td>
+      <td>${r.big_bars}</td>
+      <td class="green">${f(r.buy_cr)}</td>
+      <td class="red">${f(r.sell_cr)}</td>
+      <td>${net>0?`<span class="green">+${f(net)}</span>`:`<span class="red">${f(net)}</span>`}</td>
+      <td>${bias}</td>
+      <td class="sub">${r.avg_total_10d!=null ? f(r.avg_total_10d) : '—'}</td>
+      <td>${spk}</td>
+      <td><div class="split-wrap">
+        <span class="green" style="font-size:10px;width:28px">${bw}%</span>
+        <div class="split-bg"><div class="sb sb-b" style="width:${bw}%"></div><div class="sb sb-s" style="width:${sw}%"></div></div>
+        <span class="red" style="font-size:10px;width:28px;text-align:right">${sw}%</span>
+      </div></td>
+    </tr>`;
+  }).join('');
+}
+
+// ── Modal helpers ────────────────────────────────────────────────────────────
+function setTF(days) {
+  curDays = days;
+  document.querySelectorAll('#tf-bar .tf-btn').forEach(b=>b.classList.remove('tf-act'));
+  const btn = document.getElementById('tf-'+days);
+  if (btn) btn.classList.add('tf-act');
+  if (curSym) openModal(curSym, false);
+}
+
+function zoomChart(factor) {
+  if (mc)  mc.zoom(factor);
+  if (mvc) mvc.zoom(factor);
+}
+
+function resetChartZoom() {
+  if (mc)  mc.resetZoom();
+  if (mvc) mvc.resetZoom();
+}
+
+function _syncVolToPrice() {
+  if (!mc || !mvc) return;
+  const x = mc.scales.x;
+  try { mvc.zoomScale('x', {min:x.min, max:x.max}, 'none'); } catch(e) {}
+}
+
+function _syncPriceToVol() {
+  if (!mc || !mvc) return;
+  const x = mvc.scales.x;
+  try { mc.zoomScale('x', {min:x.min, max:x.max}, 'none'); } catch(e) {}
+}
+
+// ── Modal ────────────────────────────────────────────────────────────────────
+async function openModal(sym, resetTf=true) {
+  curSym = sym;
+  if (resetTf) {
+    curDays = 1;
+    document.querySelectorAll('#tf-bar .tf-btn').forEach(b=>b.classList.remove('tf-act'));
+    const b1 = document.getElementById('tf-1');
+    if (b1) b1.classList.add('tf-act');
+  }
+  document.getElementById('ov').classList.add('on');
+  document.getElementById('msym').textContent = sym;
+  document.getElementById('mname').textContent = '⏳ Loading…';
+  document.getElementById('mstats').innerHTML  = '';
+  if (mc)  { mc.destroy();  mc=null;  }
+  if (mvc) { mvc.destroy(); mvc=null; }
+
+  const d    = await fetch(BASE+'/api/intraday/'+sym+'?days='+curDays).then(r=>r.json()).catch(()=>({}));
+  const bars = d.bars || [];
+  document.getElementById('mname').textContent = bars.length ? bars.length+' bars' : 'no data';
+
+  const labels   = bars.map(b => curDays===1 ? tl(b.t) : b.t.substring(5,16));
+  const maxTicks = curDays>90 ? 10 : curDays>14 ? 14 : 20;
+
+  const zoomCfg = {
+    zoom: {
+      wheel: { enabled:true, speed:.08 },
+      pinch: { enabled:true },
+      mode: 'x',
+      onZoomComplete: ({chart}) => { if(chart===mc) _syncVolToPrice(); else _syncPriceToVol(); }
+    },
+    pan: {
+      enabled: true, mode: 'x',
+      onPanComplete: ({chart}) => { if(chart===mc) _syncVolToPrice(); else _syncPriceToVol(); }
+    }
+  };
+
+  // Price chart
+  mc = new Chart(document.getElementById('mc'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Price ₹',
+        data: bars.map(b=>b.c),
+        borderColor: '#58a6ff',
+        backgroundColor: 'rgba(88,166,255,0.07)',
+        borderWidth: 1.5, tension: .1, fill: true,
+        pointRadius:          bars.map(b=>b.ac>=1?4:0),
+        pointHoverRadius:     bars.map(b=>b.ac>=1?6:3),
+        pointBackgroundColor: bars.map(b => {
+          if (b.ac<1) return 'transparent';
+          return b.bs===1 ? '#3fb950' : b.bs===-1 ? '#f85149' : '#d29922';
+        }),
+        pointBorderColor: 'transparent',
+      }]
+    },
+    options: {
+      responsive:true, maintainAspectRatio:false, animation:false,
+      interaction: { mode:'index', intersect:false },
+      plugins: {
+        legend: { display:false },
+        tooltip: { callbacks: {
+          title: ctx => bars[ctx[0].dataIndex]?.t?.substring(0,16) || '',
+          label: ctx => {
+            const b = bars[ctx.dataIndex];
+            const parts = ['O:₹'+f(b.o)+'  H:₹'+f(b.h)+'  L:₹'+f(b.l)+'  C:₹'+f(b.c)];
+            if (b.ac>=1) parts.push((b.bs===1?'🟢 BUY':'🔴 SELL')+' ₹'+f(b.ac)+' Cr');
+            return parts;
+          }
+        }},
+        zoom: zoomCfg
+      },
+      scales: {
+        x: { ticks:{color:'#8b949e',maxTicksLimit:maxTicks,font:{size:10}}, grid:{color:'#21262d'} },
+        y: { position:'left', ticks:{color:'#8b949e',font:{size:10}}, grid:{color:'#21262d'},
+             title:{display:true,text:'Price ₹',color:'#58a6ff',font:{size:10}} }
+      }
+    }
+  });
+
+  // Volume chart
+  mvc = new Chart(document.getElementById('mvc'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Volume',
+        data: bars.map(b=>b.v),
+        backgroundColor: bars.map(b => b.c>=b.o ? 'rgba(63,185,80,.50)' : 'rgba(248,81,73,.50)'),
+        borderColor:     bars.map(b => b.c>=b.o ? '#3fb950' : '#f85149'),
+        borderWidth: 0, borderSkipped: false,
+        barPercentage: 0.9, categoryPercentage: 1.0,
+      }]
+    },
+    options: {
+      responsive:true, maintainAspectRatio:false, animation:false,
+      interaction: { mode:'index', intersect:false },
+      plugins: {
+        legend: { display:false },
+        tooltip: { callbacks: {
+          title: ctx => bars[ctx[0].dataIndex]?.t?.substring(0,16) || '',
+          label: ctx => 'Vol: '+fv(bars[ctx[0].dataIndex]?.v)
+        }},
+        zoom: zoomCfg
+      },
+      scales: {
+        x: { ticks:{color:'#8b949e',maxTicksLimit:maxTicks,font:{size:9}}, grid:{color:'#21262d'} },
+        y: { ticks:{color:'#8b949e',font:{size:9},maxTicksLimit:4,callback:v=>fv(v)}, grid:{color:'#21262d'} }
+      }
+    }
+  });
+
+  const rec = bpAll.find(r=>r.symbol===sym);
+  if (rec) {
+    document.getElementById('mstats').innerHTML = `
+      <div class="card" style="padding:8px"><div class="clbl">Big Bars</div><div class="cval" style="font-size:16px">${rec.big_bars}</div></div>
+      <div class="card" style="padding:8px"><div class="clbl">Buy ₹Cr</div><div class="cval green" style="font-size:16px">${f(rec.buy_cr)}</div></div>
+      <div class="card" style="padding:8px"><div class="clbl">Sell ₹Cr</div><div class="cval red" style="font-size:16px">${f(rec.sell_cr)}</div></div>
+      <div class="card" style="padding:8px"><div class="clbl">Net ₹Cr</div>
+        <div class="cval ${(rec.net_cr||0)>0?'green':'red'}" style="font-size:16px">${f(rec.net_cr)}</div></div>`;
+  }
+}
+
+function cmClose(e) {
+  if (!e || e.target===document.getElementById('ov'))
+    document.getElementById('ov').classList.remove('on');
+}
+
+function tick() { cd--; document.getElementById('cd').textContent=cd+'s'; if(cd<=0) load(); }
+
+const autoSym = new URLSearchParams(window.location.search).get('sym');
+load().then(() => { if (autoSym) openModal(autoSym); });
+setInterval(tick, 1000);
+</script>
+</body>
+</html>
