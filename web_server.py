@@ -20,7 +20,7 @@ nse_bp = Blueprint('nse', __name__)
 
 DB   = os.path.join(os.path.dirname(os.path.abspath(__file__)), "nse_intraday.db")
 IST  = pytz.timezone("Asia/Kolkata")
-PORT = 8085   # standalone only
+PORT = 8080
 
 
 def get_conn():
@@ -309,7 +309,7 @@ _OV = '''<!DOCTYPE html><html lang="en">
 <body>
 <nav>
   <div class="brand">📈 NSE Dashboard</div>
-  <div class="nav-links"><a href="{{ prefix }}/" class="on">Overview</a><a href="{{ prefix }}/bigplayer">⚡ Big Player</a><a href="{{ prefix }}/log">📋 Log</a></div>
+  <div class="nav-links"><a href="{{ prefix }}/" class="on">Overview</a><a href="{{ prefix }}/bigplayer">⚡ Big Player</a><a href="{{ prefix }}/pushlog">🔔 Pushes</a><a href="{{ prefix }}/log">📋 Log</a></div>
   <div class="nav-r">
     <span id="mbadge"></span>
     <span id="asof" class="sub"></span>
@@ -431,7 +431,7 @@ _BP = '''<!DOCTYPE html><html lang="en">
 <body>
 <nav>
   <div class="brand">📈 NSE Dashboard</div>
-  <div class="nav-links"><a href="{{ prefix }}/">Overview</a><a href="{{ prefix }}/bigplayer" class="on">⚡ Big Player</a><a href="{{ prefix }}/log">📋 Log</a></div>
+  <div class="nav-links"><a href="{{ prefix }}/">Overview</a><a href="{{ prefix }}/bigplayer" class="on">⚡ Big Player</a><a href="{{ prefix }}/pushlog">🔔 Pushes</a><a href="{{ prefix }}/log">📋 Log</a></div>
   <div class="nav-r"><span id="mbadge"></span><span id="asof" class="sub"></span><span id="cd" class="sub"></span></div>
 </nav>
 <main>
@@ -741,6 +741,112 @@ setInterval(tick,1000);
 </script></body></html>'''
 
 
+# ── Push log page ─────────────────────────────────────────────────────────────
+
+_PUSH_PAGE = '''<!DOCTYPE html><html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NSE — Push Notifications</title><style>''' + _CSS + '''
+.push-list{display:flex;flex-direction:column;gap:10px}
+.push-card{background:var(--bg2);border:1px solid var(--bd);border-radius:8px;padding:12px 16px}
+.push-card:first-child{border-color:var(--blu)}
+.push-time{font-size:11px;color:var(--sub);margin-bottom:4px;display:flex;align-items:center;gap:8px}
+.push-title{font-size:14px;font-weight:700;margin-bottom:8px;color:var(--tx)}
+.push-body{font-family:"Courier New",monospace;font-size:12px;
+           color:#d4d4d4;white-space:pre-wrap;line-height:1.6;
+           background:#0a0a0a;border-radius:6px;padding:10px 12px}
+.push-body .buy{color:var(--grn)}.push-body .sell{color:var(--red)}
+.empty{text-align:center;padding:60px 20px;color:var(--sub)}
+.cnt-badge{background:var(--bg3);border:1px solid var(--bd);border-radius:12px;
+           padding:2px 10px;font-size:11px;font-weight:600;color:var(--sub)}
+.latest-dot{width:7px;height:7px;border-radius:50%;background:var(--blu);
+            display:inline-block;animation:pulse 1.5s infinite}
+</style></head>
+<body>
+<nav>
+  <div class="brand">📈 NSE Dashboard</div>
+  <div class="nav-links">
+    <a href="{{ prefix }}/">Overview</a>
+    <a href="{{ prefix }}/bigplayer">⚡ Big Player</a>
+    <a href="{{ prefix }}/pushlog" class="on">🔔 Pushes</a>
+    <a href="{{ prefix }}/log">📋 Log</a>
+  </div>
+  <div class="nav-r"><span id="mbadge"></span><span id="cd" class="sub"></span></div>
+</nav>
+<main>
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
+    <div class="sec-title" style="margin:0">🔔 Push Notifications — Today</div>
+    <span class="cnt-badge" id="cnt">—</span>
+    <span class="sub" style="font-size:11px">Auto-refresh every 30s &nbsp;·&nbsp; Cleared each startup</span>
+    <span id="asof" class="sub" style="margin-left:auto;font-size:11px"></span>
+  </div>
+  <div id="push-list" class="push-list"></div>
+</main>
+<script>
+const BASE="{{ prefix }}";
+let cd=30;
+
+function colorBody(text) {
+  const e = s => s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  return e(text)
+    .replace(/(🟢[^\n]*BUY[^\n]*)/g, '<span class="buy">$1</span>')
+    .replace(/(🔴[^\n]*SELL[^\n]*)/g,'<span class="sell">$1</span>');
+}
+
+async function load() {
+  const d = await fetch(BASE+'/api/pushlog').then(r=>r.json()).catch(()=>({pushes:[]}));
+  const list  = document.getElementById('push-list');
+  const pushes = d.pushes || [];
+
+  document.getElementById('cnt').textContent = pushes.length + ' push' + (pushes.length!==1?'es':'');
+  document.getElementById('asof').textContent = 'Updated ' + (d.as_of||'').substring(11,19) + ' IST';
+  document.getElementById('mbadge').innerHTML = d.market_open
+    ? \'<span class="badge live"><span class="dot"></span>LIVE</span>\'
+    : \'<span class="badge closed">CLOSED</span>\';
+
+  if (!pushes.length) {
+    list.innerHTML = \'<div class="empty">No push notifications yet today.<br><span style="font-size:12px">They appear here when the top-6 big player positions change.</span></div>\';
+    return;
+  }
+
+  list.innerHTML = pushes.map((p, i) => {
+    const timeStr = (p.sent_at || \'\').substring(11, 19);
+    const dateStr = (p.sent_at || \'\').substring(0, 10);
+    const isLatest = i === 0;
+    return `<div class="push-card">
+      <div class="push-time">
+        ${isLatest ? \'<span class="latest-dot"></span><span style="color:var(--blu);font-weight:600">Latest</span>\' : \'\'}
+        <span>${dateStr} &nbsp;<b>${timeStr}</b> IST</span>
+        <span class="sub">#${pushes.length - i}</span>
+      </div>
+      <div class="push-title">${p.title}</div>
+      <div class="push-body">${colorBody(p.body)}</div>
+    </div>`;
+  }).join(\'\');
+  cd = 30;
+}
+
+function tick(){cd--;document.getElementById(\'cd\').textContent=cd+\'s\';if(cd<=0)load();}
+load(); setInterval(tick,1000);
+</script></body></html>'''
+
+
+@nse_bp.route('/api/pushlog')
+def api_pushlog():
+    import sqlite3 as _sq
+    conn = get_conn()
+    conn.row_factory = _sq.Row
+    rows = conn.execute(
+        "SELECT id, sent_at, title, body FROM push_log ORDER BY sent_at DESC"
+    ).fetchall()
+    conn.close()
+    return jsonify({
+        'pushes':      [dict(r) for r in rows],
+        'count':       len(rows),
+        'as_of':       datetime.datetime.now(IST).isoformat(),
+        'market_open': is_market_open(),
+    })
+
+
 # ── Log page ───────────────────────────────────────────────────────────────────
 
 _LOG_PAGE = '''<!DOCTYPE html><html lang="en">
@@ -769,6 +875,7 @@ _LOG_PAGE = '''<!DOCTYPE html><html lang="en">
   <div class="nav-links">
     <a href="{{ prefix }}/">Overview</a>
     <a href="{{ prefix }}/bigplayer">⚡ Big Player</a>
+    <a href="{{ prefix }}/pushlog">🔔 Pushes</a>
     <a href="{{ prefix }}/log" class="on">📋 Log</a>
   </div>
   <div class="nav-r"><span id="cd" class="sub"></span></div>
@@ -894,6 +1001,10 @@ def overview():
 @nse_bp.route('/bigplayer')
 def bigplayer():
     return render_template_string(_BP, prefix=_prefix())
+
+@nse_bp.route('/pushlog')
+def pushlog_view():
+    return render_template_string(_PUSH_PAGE, prefix=_prefix())
 
 @nse_bp.route('/log')
 def log_view():

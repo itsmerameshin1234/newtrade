@@ -1,7 +1,8 @@
 import time
 import datetime
 from fetchday import fetch_and_store
-from db_setup import ensure_table, ensure_symbol_info_table, purge_old_data
+from db_setup import ensure_table, ensure_symbol_info_table, ensure_push_log_table, clear_push_log, purge_old_data
+from notifier import check_and_notify
 
 # ── market window ─────────────────────────────────────────────────────────────
 MARKET_OPEN  = (9,  15)   # 09:15
@@ -21,6 +22,8 @@ def main():
     # ── one-time DB init ──────────────────────────────────────────────────────
     ensure_table()              # create bars table if not exists
     ensure_symbol_info_table()  # create symbol_info table if not exists (no-op if exists)
+    ensure_push_log_table()     # create push_log table if not exists
+    clear_push_log()            # fresh slate — today's pushes only
     purge_old_data()            # drop rows older than 375 days (TTL equivalent)
 
     print("=" * 50)
@@ -43,6 +46,7 @@ def main():
                       f"Minute {cur_min[0]:02d}:{cur_min[1]:02d} — starting fetch ...")
                 try:
                     fetch_and_store()
+                    check_and_notify()      # push if top-6 changed
                 except Exception as e:
                     print(f"  [ERROR] {e}")
                 finally:

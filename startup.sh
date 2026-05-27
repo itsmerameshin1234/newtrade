@@ -8,7 +8,7 @@ PYTHON="python3"
 
 # ── Fresh log on every startup (no cross-reboot accumulation) ─────────────────
 > "$LOG_FILE"
-exec >> "$LOG_FILE" 2>&1          # all stdout + stderr from here goes to log
+exec >> "$LOG_FILE" 2>&1
 
 # ── Network check ──────────────────────────────────────────────────────────────
 ping_with_retry() {
@@ -80,12 +80,11 @@ echo "$(date '+%Y-%m-%d %H:%M:%S') - Running symbol_info (one-time refresh) ..."
 $PYTHON "$PROJECT_DIR/symbol_info.py"
 echo "$(date '+%Y-%m-%d %H:%M:%S') - symbol_info done."
 
-# 6. Start app.py (trade dashboard + NSE blueprint on port 8080)
-cd /home/ramesh/trade && start_daemon "app.py" 10 &
-cd "$PROJECT_DIR"
+# 6. Web dashboard — standalone Flask on port 8080 (daemon, restarts on crash)
+start_daemon "web_server.py" 10 &
 
-# 7. Start main_startup.py as a restartable daemon
-#    main_startup.py exits cleanly after market close → loop breaks automatically
+# 7. Intraday bar collector + push notifier
+#    exits cleanly at market close (15:35) — not restarted
 start_daemon "main_startup.py" 30 &
 
 # Wait for all background jobs

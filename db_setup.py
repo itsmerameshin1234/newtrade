@@ -110,6 +110,59 @@ def ensure_symbol_info_table(conn: sqlite3.Connection | None = None) -> None:
             conn.close()
 
 
+# ── push_log table ────────────────────────────────────────────────────────────
+
+def ensure_push_log_table(conn: sqlite3.Connection | None = None) -> None:
+    """Create the push_log table (cleared every startup, holds today's pushes)."""
+    _owned = conn is None
+    if _owned:
+        conn = get_connection()
+    try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS push_log (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                sent_at    TEXT    NOT NULL,   -- ISO-8601 IST timestamp
+                title      TEXT    NOT NULL,
+                body       TEXT    NOT NULL
+            )
+        """)
+        conn.commit()
+    finally:
+        if _owned:
+            conn.close()
+
+
+def clear_push_log(conn: sqlite3.Connection | None = None) -> None:
+    """Truncate push_log — called once at startup for a clean slate."""
+    _owned = conn is None
+    if _owned:
+        conn = get_connection()
+    try:
+        conn.execute("DELETE FROM push_log")
+        conn.commit()
+        print("[db] push_log cleared.")
+    finally:
+        if _owned:
+            conn.close()
+
+
+def log_push(title: str, body: str, sent_at: str,
+             conn: sqlite3.Connection | None = None) -> None:
+    """Insert one push record into push_log."""
+    _owned = conn is None
+    if _owned:
+        conn = get_connection()
+    try:
+        conn.execute(
+            "INSERT INTO push_log (sent_at, title, body) VALUES (?, ?, ?)",
+            (sent_at, title, body)
+        )
+        conn.commit()
+    finally:
+        if _owned:
+            conn.close()
+
+
 # ── TTL cleanup ────────────────────────────────────────────────────────────────
 
 def purge_old_data(conn: sqlite3.Connection | None = None) -> None:
