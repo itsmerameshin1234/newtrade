@@ -1,0 +1,22 @@
+NSE Dashboard — Server Info
+===========================
+
+URLs
+----
+http://debdesktop.duckdns.org:8080/
+http://debdesktop.duckdns.org:8080/bigplayer
+http://debdesktop.duckdns.org:8080/pushlog
+http://debdesktop.duckdns.org:8080/log
+
+DuckDNS
+-------
+Domain  : debdesktop.duckdns.org
+Updates : every 5 minutes (both IPv4 and IPv6)
+IPv4    : 49.37.209.37
+IPv6    : 2409:4091:a026:fe31:72f3:95ff:fe0d:78bd
+
+Server
+------
+Port    : 8080
+App     : Flask / web_server.py (standalone)
+Listens : *:8080 — accepts both IPv4 and IPv6 connections
