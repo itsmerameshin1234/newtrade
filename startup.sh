@@ -4,7 +4,7 @@
 
 PROJECT_DIR="/home/ramesh/newtrade"
 LOG_FILE="/home/ramesh/log/newtrade.log"
-PYTHON="python3"
+PYTHON="python3 -u"
 
 # ── Fresh log on every startup (no cross-reboot accumulation) ─────────────────
 > "$LOG_FILE"
