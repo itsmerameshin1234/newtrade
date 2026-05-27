@@ -58,7 +58,8 @@ else
         log "DB: $DB_SIZE → $DB_GZ_SIZE  uploading to ${REMOTE}/db/"
 
         if rclone copyto "$TMP_GZ" "${REMOTE}/db/nse_intraday_${DATE}.db.gz" \
-                --drive-acknowledge-abuse --retries 3 --stats-one-line 2>&1; then
+                --drive-acknowledge-abuse --retries 3 --stats-one-line \
+                --drive-chunk-size 128M --transfers 4 2>&1; then
             log "DB upload OK: nse_intraday_${DATE}.db.gz ($DB_GZ_SIZE)"
         else
             fail "DB upload to Google Drive failed"
@@ -93,7 +94,8 @@ else
     log "Log: $LOG_SIZE_STR  uploading to ${REMOTE}/logs/"
 
     if rclone copyto "$LOGFILE" "${REMOTE}/logs/newtrade_${DATE}.log" \
-            --drive-acknowledge-abuse --retries 3 --stats-one-line 2>&1; then
+            --drive-acknowledge-abuse --retries 3 --stats-one-line \
+            --drive-chunk-size 128M --transfers 4 2>&1; then
         log "Log upload OK: newtrade_${DATE}.log ($LOG_SIZE_STR)"
     else
         fail "Log upload to Google Drive failed"
