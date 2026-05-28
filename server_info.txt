@@ -20,3 +20,10 @@ Server
 Port    : 8080
 App     : Flask / web_server.py (standalone)
 Listens : *:8080 — accepts both IPv4 and IPv6 connections
+
+
+
+Nifty 50	https://www.nseindia.com/api/equity-stockIndices?index=NIFTY%2050
+Bank Nifty	https://www.nseindia.com/api/equity-stockIndices?index=NIFTY%20BANK
+Fin Service	https://www.nseindia.com/api/equity-stockIndices?index=NIFTY%20FINANCIAL%20SERVICES
+Midcap Select	https://www.nseindia.com/api/equity-stockIndices?index=NIFTY%20MIDCAP%20SELECT

@@ -14,6 +14,8 @@ import sqlite3, os, datetime, re
 from flask import (Blueprint, Flask, jsonify, render_template,
                    request, send_file, send_from_directory,
                    Response, current_app)
+from symbol_common import symbols as _sc_symbols
+INDEX_MAP = {sym: idx for _, sym, idx in _sc_symbols}
 import pytz
 
 LOG_FILE = "/home/ramesh/log/newtrade.log"
@@ -44,6 +46,14 @@ def get_conn():
 def today_ist():
     return datetime.datetime.now(IST).strftime('%Y-%m-%d')
 
+def effective_date(conn):
+    """Return today if it has bar data, else fall back to the last date that does."""
+    today = today_ist()
+    row = conn.execute(
+        "SELECT MAX(DATE(t)) FROM bars WHERE DATE(t) <= ?", (today,)
+    ).fetchone()
+    return row[0] if row and row[0] else today
+
 def is_market_open():
     n = datetime.datetime.now(IST)
     return (9, 15) <= (n.hour, n.minute) <= (15, 35) and n.weekday() < 5
@@ -66,8 +76,8 @@ def serve_css():
 
 @nse_bp.route('/api/summary')
 def api_summary():
-    today = today_ist()
     conn  = get_conn()
+    today = effective_date(conn)
 
     mkt = conn.execute('''
         SELECT COUNT(DISTINCT symbol) as symbols,
@@ -100,18 +110,24 @@ def api_summary():
     ''', (today, today)).fetchall()
 
     conn.close()
+    sym_list = []
+    for r in syms:
+        row = dict(r)
+        row['indices'] = INDEX_MAP.get(row['symbol'], '')
+        sym_list.append(row)
     return jsonify({
         'market':      dict(mkt) if mkt else {},
-        'symbols':     [dict(r) for r in syms],
+        'symbols':     sym_list,
         'as_of':       datetime.datetime.now(IST).isoformat(),
+        'data_date':   today,
         'market_open': is_market_open(),
     })
 
 
 @nse_bp.route('/api/bigplayer')
 def api_bigplayer():
-    today = today_ist()
     conn  = get_conn()
+    today = effective_date(conn)
 
     # Last 10 distinct trading dates (excluding today)
     hist_dates = [r[0] for r in conn.execute(
@@ -202,6 +218,7 @@ def api_bigplayer():
         d['avg_total_10d'] = a.get('avg_total')
         avg_t = a.get('avg_total')
         d['spike_ratio'] = round(d['total_cr'] / avg_t, 2) if avg_t and avg_t > 0 else None
+        d['indices'] = INDEX_MAP.get(d['symbol'], '')
         result.append(d)
 
     return jsonify({
@@ -217,6 +234,140 @@ def api_bigplayer():
     })
 
 
+@nse_bp.route('/api/index_flow')
+def api_index_flow():
+    conn  = get_conn()
+    today = effective_date(conn)
+
+    CODES = ['NI', 'BN', 'FN', 'MS']
+
+    # Build index membership: code -> set of symbols
+    # Double-counting is intentional: a symbol in NI+BN contributes fully to both.
+    idx_members = {c: set() for c in CODES}
+    for sym, idx_str in INDEX_MAP.items():
+        for code in (idx_str or '').split(','):
+            if code in idx_members:
+                idx_members[code].add(sym)
+
+    # Today's big-player data per symbol
+    sym_rows = conn.execute('''
+        SELECT symbol,
+               ROUND(SUM(CASE WHEN bs=1  THEN ac ELSE 0 END), 2)  as buy_cr,
+               ROUND(SUM(CASE WHEN bs=-1 THEN ac ELSE 0 END), 2)  as sell_cr,
+               ROUND(SUM(ac), 2)                                   as total_cr,
+               ROUND(SUM(CASE WHEN bs=1 THEN ac ELSE -ac END), 2) as net_cr,
+               COUNT(*)                                            as big_bars
+        FROM bars WHERE DATE(t)=? AND ac>=1
+        GROUP BY symbol
+    ''', (today,)).fetchall()
+
+    # Per-minute per-symbol net flow (for index timeline)
+    tl_rows = conn.execute('''
+        SELECT t, symbol,
+               ROUND(SUM(CASE WHEN bs=1 THEN ac ELSE -ac END), 2) as net_cr
+        FROM bars WHERE DATE(t)=? AND ac>=1
+        GROUP BY t, symbol ORDER BY t
+    ''', (today,)).fetchall()
+
+    # 10-day historical total per symbol per day (for index-level spike ratio)
+    hist_dates = [r[0] for r in conn.execute(
+        "SELECT DISTINCT DATE(t) FROM bars WHERE DATE(t)<? ORDER BY DATE(t) DESC LIMIT 10",
+        (today,)
+    ).fetchall()]
+    hist_sym_day = {}  # (symbol, dt) -> total_cr
+    if hist_dates:
+        ph = ','.join('?' * len(hist_dates))
+        for r in conn.execute(f'''
+            SELECT symbol, DATE(t) as dt, ROUND(SUM(ac),2) as total_cr
+            FROM bars WHERE ac>=1 AND DATE(t) IN ({ph})
+            GROUP BY symbol, dt
+        ''', hist_dates).fetchall():
+            hist_sym_day[(r['symbol'], r['dt'])] = r['total_cr'] or 0
+
+    # Build per-index aggregates
+    indices_out = {}
+    for code in CODES:
+        members = idx_members[code]
+        buy = sell = net = bars = 0
+        buying = selling = active = 0
+        sym_details = []
+
+        for r in sym_rows:
+            sym = r['symbol']
+            if sym not in members:
+                continue
+            active += 1
+            b  = r['buy_cr']  or 0
+            s  = r['sell_cr'] or 0
+            n  = r['net_cr']  or 0
+            buy  += b; sell += s; net += n; bars += r['big_bars'] or 0
+            if n > 0:   buying   += 1
+            elif n < 0: selling  += 1
+            sym_details.append(dict(r))
+
+        sym_details.sort(key=lambda x: abs(x['net_cr'] or 0), reverse=True)
+
+        # Index-level 10d avg total
+        idx_day_totals = {}
+        for sym in members:
+            for dt in hist_dates:
+                v = hist_sym_day.get((sym, dt), 0)
+                idx_day_totals[dt] = idx_day_totals.get(dt, 0) + v
+        avg10 = round(sum(idx_day_totals.values()) / len(idx_day_totals), 2) if idx_day_totals else None
+        today_total = round(buy + sell, 2)
+        spike = round(today_total / avg10, 2) if avg10 and avg10 > 0 else None
+
+        # Top-3 concentration: what % of |net flow| comes from top 3 symbols
+        top3_abs = sum(abs(s['net_cr'] or 0) for s in sym_details[:3])
+        total_abs = sum(abs(s['net_cr'] or 0) for s in sym_details)
+        concentration = round(top3_abs / total_abs * 100) if total_abs > 0 else 0
+
+        indices_out[code] = {
+            'buy_cr':        round(buy,  2),
+            'sell_cr':       round(sell, 2),
+            'net_cr':        round(net,  2),
+            'big_bars':      bars,
+            'total_symbols': len(members),
+            'active_today':  active,
+            'buying_count':  buying,
+            'selling_count': selling,
+            'avg10_total':   avg10,
+            'spike_ratio':   spike,
+            'concentration': concentration,
+            'top_movers':    sym_details[:10],
+        }
+
+    # Per-index cumulative net flow timeline
+    all_ts = sorted(set(r['t'] for r in tl_rows))
+    ts_sym_net = {}  # t -> {symbol: net_cr}
+    for r in tl_rows:
+        ts_sym_net.setdefault(r['t'], {})[r['symbol']] = r['net_cr'] or 0
+
+    idx_timeline = {}
+    for code in CODES:
+        members = idx_members[code]
+        cum, pts = 0.0, []
+        for t in all_ts:
+            sym_nets = ts_sym_net.get(t, {})
+            cum = round(cum + sum(v for sym, v in sym_nets.items() if sym in members), 2)
+            pts.append([t, cum])
+        idx_timeline[code] = pts
+
+    conn.close()
+    return jsonify({
+        'indices':     indices_out,
+        'timeline':    idx_timeline,
+        'today_date':  today,
+        'as_of':       datetime.datetime.now(IST).isoformat(),
+        'market_open': is_market_open(),
+    })
+
+
+@nse_bp.route('/index_flow')
+def page_index_flow():
+    return render_template('nse_index_flow.html', prefix=_prefix())
+
+
 @nse_bp.route('/api/intraday/<symbol>')
 def api_intraday(symbol):
     days = request.args.get('days', 1, type=int)
@@ -224,7 +375,7 @@ def api_intraday(symbol):
     conn = get_conn()
 
     if days == 1:
-        today = today_ist()
+        today = effective_date(conn)
         bars = conn.execute(
             "SELECT t, o, h, l, c, v, ROUND(ac,4) as ac, bs "
             "FROM bars WHERE symbol=? AND DATE(t)=? ORDER BY t",

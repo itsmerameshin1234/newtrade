@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>NSE — Index Flow</title>
+  <link rel="stylesheet" href="{{ prefix }}/nse.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+<nav>
+  <div class="brand">📈 NSE Dashboard</div>
+  <div class="nav-links">
+    <a href="{{ prefix }}/">Overview</a>
+    <a href="{{ prefix }}/bigplayer">⚡ Big Player</a>
+    <a href="{{ prefix }}/index_flow" class="on">📊 Index Flow</a>
+    <a href="{{ prefix }}/pushlog">🔔 Pushes</a>
+    <a href="{{ prefix }}/log">📋 Log</a>
+  </div>
+  <div class="nav-r">
+    <span id="mbadge"></span>
+    <span id="asof" class="sub"></span>
+    <span id="cd" class="sub"></span>
+  </div>
+</nav>
+<main>
+
+  <!-- ── 4 Index Cards ──────────────────────────────────────────────────────── -->
+  <div class="idx-cards" id="idx-cards"></div>
+
+  <!-- ── Charts ────────────────────────────────────────────────────────────── -->
+  <div class="grid2">
+    <div class="sec">
+      <div class="sec-title">Buy vs Sell — All Indices ₹Cr</div>
+      <div style="position:relative;height:220px"><canvas id="cmp"></canvas></div>
+    </div>
+    <div class="sec">
+      <div class="sec-title">Cumulative Net Flow — ₹Cr
+        <span class="sub" style="font-weight:400;font-size:11px">(rising = accumulation)</span>
+      </div>
+      <div style="position:relative;height:220px"><canvas id="cum"></canvas></div>
+    </div>
+  </div>
+
+  <!-- ── Top Movers 2×2 ────────────────────────────────────────────────────── -->
+  <div class="grid2">
+    <div class="sec" id="sec-NI"></div>
+    <div class="sec" id="sec-BN"></div>
+  </div>
+  <div class="grid2">
+    <div class="sec" id="sec-FN"></div>
+    <div class="sec" id="sec-MS"></div>
+  </div>
+
+</main>
+
+<script>
+const BASE = "{{ prefix }}";
+let cmp = null, cum = null, cd = 60;
+
+const IDX_META = {
+  NI: { name:'Nifty 50',       cls:'idx-ni', color:'#4da6ff' },
+  BN: { name:'Bank Nifty',     cls:'idx-bn', color:'#ffaa33' },
+  FN: { name:'Fin Nifty',      cls:'idx-fn', color:'#cc66ff' },
+  MS: { name:'Midcap Select',  cls:'idx-ms', color:'#33cc99' },
+};
+const CODES = ['NI','BN','FN','MS'];
+
+const f  = (v,d=2) => v==null ? '—' : Number(v).toLocaleString('en-IN',{minimumFractionDigits:d,maximumFractionDigits:d});
+const fc = v => {
+  if (v==null) return '<span class="sub">—</span>';
+  const c = v>0?'green':v<0?'red':'sub';
+  return `<span class="${c}">${v>0?'+':''}${f(v)}</span>`;
+};
+const tl = iso => iso ? iso.substring(11,16) : '';
+
+async function load() {
+  const d = await fetch(BASE+'/api/index_flow').then(r=>r.json()).catch(()=>({}));
+  render(d);
+  document.getElementById('mbadge').innerHTML = d.market_open
+    ? '<span class="badge live"><span class="dot"></span>LIVE</span>'
+    : '<span class="badge closed">CLOSED</span>';
+  document.getElementById('asof').textContent = 'Updated '+(d.as_of||'').substring(11,19)+' IST';
+  cd = 60;
+}
+
+function render(d) {
+  const idxData = d.indices || {};
+  const timeline = d.timeline || {};
+
+  // ── Index cards ────────────────────────────────────────────────────────────
+  document.getElementById('idx-cards').innerHTML = CODES.map(code => {
+    const m  = IDX_META[code];
+    const r  = idxData[code] || {};
+    const net     = r.net_cr    ?? null;
+    const buy     = r.buy_cr    ?? null;
+    const sell    = r.sell_cr   ?? null;
+    const buying  = r.buying_count  ?? 0;
+    const active  = r.active_today  ?? 0;
+    const total   = r.total_symbols ?? 0;
+    const spike   = r.spike_ratio;
+    const conc    = r.concentration ?? 0;
+    const biasTag = net==null?'' : net>0
+      ? '<span class="tag tbuy">BUY ↑</span>'
+      : net<0 ? '<span class="tag tsell">SELL ↓</span>'
+      : '<span class="tag tneut">NEUTRAL</span>';
+    const breadthPct = active>0 ? Math.round(buying/active*100) : 0;
+    const spkHtml = spike==null ? '<span class="sub">no hist</span>'
+      : spike>=3 ? `<span class="spk-hi">${spike}×</span>`
+      : spike>=1.5 ? `<span class="spk-md">${spike}×</span>`
+      : `<span class="sub">${spike}×</span>`;
+
+    return `<div class="idx-card">
+      <div class="idx-card-hdr">
+        <span class="idx-badge ${m.cls}" style="font-size:13px;padding:3px 8px">${code}</span>
+        <span class="sub" style="font-size:11px">${m.name}</span>
+        ${biasTag}
+      </div>
+      <div class="idx-card-net" style="color:${(net??0)>=0?'#3fb950':'#f85149'}">${net!=null?(net>0?'+':'')+f(net)+' Cr':'—'}</div>
+      <div class="idx-card-row">
+        <span class="green" style="font-size:11px">▲ ${buy!=null?f(buy):' —'}</span>
+        <span class="red"   style="font-size:11px">▼ ${sell!=null?f(sell):' —'}</span>
+      </div>
+      <div class="idx-breadth-lbl">
+        <span>${buying}/${active} buying</span>
+        <span class="sub" style="font-size:10px">active ${active}/${total}</span>
+      </div>
+      <div class="breadth-bar-bg">
+        <div class="breadth-bar-fill" style="width:${breadthPct}%;background:${breadthPct>=60?'#3fb950':breadthPct<=40?'#f85149':'#d29922'}"></div>
+      </div>
+      <div class="idx-card-footer">
+        <span class="sub" style="font-size:10px">Spike:</span> ${spkHtml}
+        <span class="sub" style="font-size:10px;margin-left:8px">Top3:</span>
+        <span style="font-size:10px">${conc}%</span>
+      </div>
+    </div>`;
+  }).join('');
+
+  // ── Comparison bar chart ───────────────────────────────────────────────────
+  if (cmp) cmp.destroy();
+  cmp = new Chart(document.getElementById('cmp'), {
+    type: 'bar',
+    data: {
+      labels: CODES.map(c => IDX_META[c].name),
+      datasets: [
+        { label:'Buy ₹Cr',  data:CODES.map(c=>(idxData[c]?.buy_cr||0)),
+          backgroundColor:'rgba(63,185,80,.45)', borderColor:'#3fb950',borderWidth:1 },
+        { label:'Sell ₹Cr', data:CODES.map(c=>(idxData[c]?.sell_cr||0)),
+          backgroundColor:'rgba(248,81,73,.45)', borderColor:'#f85149',borderWidth:1 },
+      ]
+    },
+    options: {
+      responsive:true, maintainAspectRatio:false, animation:false,
+      plugins:{ legend:{labels:{color:'#e6edf3',font:{size:11}}}, tooltip:{mode:'index',intersect:false} },
+      scales:{
+        x:{ ticks:{color:'#8b949e',font:{size:11}}, grid:{color:'#21262d'} },
+        y:{ ticks:{color:'#8b949e',font:{size:10}}, grid:{color:'#21262d'},
+            title:{display:true,text:'₹ Cr',color:'#8b949e',font:{size:10}} }
+      }
+    }
+  });
+
+  // ── Cumulative net flow ────────────────────────────────────────────────────
+  const allTs = [...new Set(CODES.flatMap(c=>(timeline[c]||[]).map(p=>p[0])))].sort();
+  if (cum) cum.destroy();
+  cum = new Chart(document.getElementById('cum'), {
+    type: 'line',
+    data: {
+      labels: allTs.map(tl),
+      datasets: CODES.map(code => {
+        const m   = IDX_META[code];
+        const pts = timeline[code] || [];
+        const mp  = Object.fromEntries(pts.map(p=>[p[0],p[1]]));
+        let last  = null;
+        return {
+          label: code,
+          data: allTs.map(t => { if(mp[t]!==undefined) last=mp[t]; return last; }),
+          borderColor: m.color,
+          backgroundColor: 'transparent',
+          borderWidth: 2, pointRadius: 0, tension: .2
+        };
+      })
+    },
+    options: {
+      responsive:true, maintainAspectRatio:false, animation:false,
+      plugins:{ legend:{labels:{color:'#e6edf3',font:{size:11}}}, tooltip:{mode:'index',intersect:false} },
+      scales:{
+        x:{ ticks:{color:'#8b949e',maxTicksLimit:18,font:{size:10}}, grid:{color:'#21262d'} },
+        y:{ ticks:{color:'#8b949e',font:{size:10}}, grid:{color:'#21262d'},
+            title:{display:true,text:'Cumulative ₹Cr',color:'#8b949e',font:{size:10}} }
+      }
+    }
+  });
+
+  // ── Per-index top movers ───────────────────────────────────────────────────
+  CODES.forEach(code => {
+    const m    = IDX_META[code];
+    const r    = idxData[code] || {};
+    const rows = r.top_movers || [];
+    const html = `
+      <div class="sec-title">
+        <span class="idx-badge ${m.cls}" style="font-size:11px;padding:2px 7px">${code}</span>
+        ${m.name} — Top Movers
+      </div>
+      <div style="overflow-x:auto">
+        <table><thead><tr>
+          <th>Symbol</th><th>Buy ₹Cr</th><th>Sell ₹Cr</th>
+          <th>Net ₹Cr</th><th>Bias</th><th>Bars</th>
+        </tr></thead><tbody>
+        ${rows.map(sym => {
+          const net  = sym.net_cr || 0;
+          const bias = net>0 ? '<span class="tag tbuy">BUY</span>'
+                     : net<0 ? '<span class="tag tsell">SELL</span>'
+                     : '<span class="tag tneut">—</span>';
+          return `<tr>
+            <td><span class="sym" onclick="window.location='${BASE}/bigplayer?sym=${sym.symbol}'">${sym.symbol}</span></td>
+            <td class="green">${f(sym.buy_cr)}</td>
+            <td class="red">${f(sym.sell_cr)}</td>
+            <td>${fc(sym.net_cr)}</td>
+            <td>${bias}</td>
+            <td class="sub">${sym.big_bars}</td>
+          </tr>`;
+        }).join('')}
+        </tbody></table>
+      </div>`;
+    document.getElementById('sec-'+code).innerHTML = html;
+  });
+}
+
+function tick() { cd--; document.getElementById('cd').textContent=cd+'s'; if(cd<=0) load(); }
+
+load();
+setInterval(tick, 1000);
+</script>
+</body>
+</html>

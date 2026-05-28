@@ -15,6 +15,7 @@
   <div class="nav-links">
     <a href="{{ prefix }}/">Overview</a>
     <a href="{{ prefix }}/bigplayer" class="on">⚡ Big Player</a>
+    <a href="{{ prefix }}/index_flow">📊 Index Flow</a>
     <a href="{{ prefix }}/pushlog">🔔 Pushes</a>
     <a href="{{ prefix }}/log">📋 Log</a>
   </div>
@@ -49,9 +50,12 @@
       <div style="position:relative;height:220px"><canvas id="fc"></canvas></div>
     </div>
     <div class="sec">
-      <div class="sec-title">Cumulative Net Flow — Top Symbols
-        <span class="sub" style="font-weight:400;font-size:11px">(rising=accumulation, falling=distribution)</span>
+      <div class="toolbar" style="margin-bottom:6px">
+        <div class="sec-title" style="margin:0">Accumulation / Distribution — Top 8</div>
+        <span class="sub" style="font-size:10px">scroll=zoom · drag=pan · click legend=symbol chart</span>
+        <button class="tf-btn" onclick="if(cc)cc.resetZoom()" style="margin-left:auto">↺ Reset</button>
       </div>
+      <div id="cc-legend" style="display:flex;flex-wrap:wrap;gap:3px 10px;margin-bottom:5px;font-size:10px;min-height:14px"></div>
       <div style="position:relative;height:220px"><canvas id="cc"></canvas></div>
     </div>
   </div>
@@ -69,6 +73,7 @@
     <div style="overflow-x:auto">
       <table><thead><tr>
         <th>Symbol</th>
+        <th>Index</th>
         <th>Big Bars</th><th>Buy ₹Cr</th><th>Sell ₹Cr</th>
         <th>Net ₹Cr</th><th>Bias</th>
         <th>10d Avg ₹Cr</th><th>Spike</th><th>Buy / Sell Split</th>
@@ -201,25 +206,74 @@ function render(d) {
     }
   });
 
-  // ── Cumulative net flow chart ────────────────────────────────────────────
-  const cf   = d.cum_flows || {};
-  const syms = Object.keys(cf);
-  const allTs = [...new Set(Object.values(cf).flat().map(p=>p[0]))].sort();
+  // ── Cumulative net flow chart (top 8 only, zoom+click enabled) ──────────
+  const cf = d.cum_flows || {};
+  // Sort by final cumulative value so legend/line order matches visually
+  const syms = Object.keys(cf).slice(0, 8).sort((a, b) => {
+    const av = cf[a].length ? cf[a][cf[a].length-1][1] : 0;
+    const bv = cf[b].length ? cf[b][cf[b].length-1][1] : 0;
+    return bv - av;
+  });
+  const allTs = [...new Set(syms.flatMap(s => cf[s].map(p=>p[0])))].sort();
   if (cc) cc.destroy();
+
+  // inline plugin: dashed zero-reference line
+  const zeroLine = {
+    id:'zeroLine',
+    afterDraw(chart) {
+      const {ctx, chartArea:{left,right}, scales:{y}} = chart;
+      if (y.min > 0 || y.max < 0) return;
+      const y0 = y.getPixelForValue(0);
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(left, y0); ctx.lineTo(right, y0);
+      ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+      ctx.lineWidth = 1; ctx.setLineDash([4,4]);
+      ctx.stroke(); ctx.restore();
+    }
+  };
+
   cc = new Chart(document.getElementById('cc'), {
     type: 'line',
+    plugins: [zeroLine],
     data: {
       labels: allTs.map(tl),
       datasets: syms.map((sym,i) => {
         const m = Object.fromEntries(cf[sym].map(p=>[p[0],p[1]]));
-        return { label:sym, data:allTs.map(t=>m[t]??null),
-                 borderColor:COLORS[i%COLORS.length], backgroundColor:'transparent',
-                 borderWidth:1.5, pointRadius:0, spanGaps:true, tension:.2 };
+        let last = null;
+        return {
+          label: sym,
+          data: allTs.map(t => { if(m[t]!==undefined) last=m[t]; return last; }),
+          borderColor: COLORS[i%COLORS.length],
+          backgroundColor: 'transparent',
+          borderWidth: 2, pointRadius: 0, spanGaps: true, tension: .2
+        };
       })
     },
     options: {
       responsive:true, maintainAspectRatio:false, animation:false,
-      plugins: { legend:{labels:{color:'#e6edf3',font:{size:10},boxWidth:10}}, tooltip:{mode:'index',intersect:false} },
+      onClick(evt, elements) {
+        if (elements.length) openModal(syms[elements[0].datasetIndex]);
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          mode:'index', intersect:false,
+          callbacks: {
+            label(ctx) {
+              const v = ctx.raw;
+              if (v == null) return null;
+              const dir = v > 0.5 ? '▲ accum' : v < -0.5 ? '▼ dist' : '≈ flat';
+              const sign = v > 0 ? '+' : '';
+              return ` ${ctx.dataset.label}: ${sign}${Number(v).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})} Cr  (${dir})`;
+            }
+          }
+        },
+        zoom: {
+          zoom:{ wheel:{enabled:true,speed:.08}, pinch:{enabled:true}, mode:'x' },
+          pan: { enabled:true, mode:'x' }
+        }
+      },
       scales: {
         x: { ticks:{color:'#8b949e',maxTicksLimit:18,font:{size:10}}, grid:{color:'#21262d'} },
         y: { ticks:{color:'#8b949e',font:{size:10}}, grid:{color:'#21262d'},
@@ -227,6 +281,13 @@ function render(d) {
       }
     }
   });
+
+  // Custom HTML legend — sorted by final value, outside canvas so it never blocks
+  document.getElementById('cc-legend').innerHTML = syms.map((sym, i) =>
+    `<span onclick="openModal('${sym}')" title="Open ${sym}" style="cursor:pointer;display:inline-flex;align-items:center;gap:4px;color:${COLORS[i%COLORS.length]}">
+      <span style="display:inline-block;width:14px;height:2px;background:${COLORS[i%COLORS.length]};border-radius:1px;flex-shrink:0"></span>${sym}
+    </span>`
+  ).join('');
 
   // ── Top-20 grouped bar chart ─────────────────────────────────────────────
   const top = bpAll.slice(0,20);
@@ -269,8 +330,13 @@ function filt() {
     const tot = (r.buy_cr||0)+(r.sell_cr||0);
     const bw  = tot ? Math.round((r.buy_cr||0)/tot*100) : 50;
     const sw  = 100-bw;
+    const ibadges = (r.indices||'').split(',').filter(Boolean).map(i => {
+      const cls = {NI:'idx-ni',BN:'idx-bn',FN:'idx-fn',MS:'idx-ms'}[i]||'idx-other';
+      return `<span class="idx-badge ${cls}">${i}</span>`;
+    }).join('');
     return `<tr>
       <td><span class="sym" onclick="openModal('${r.symbol}')">${r.symbol}</span></td>
+      <td style="white-space:nowrap">${ibadges||'<span class="sub">—</span>'}</td>
       <td>${r.big_bars}</td>
       <td class="green">${f(r.buy_cr)}</td>
       <td class="red">${f(r.sell_cr)}</td>

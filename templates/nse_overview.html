@@ -12,6 +12,7 @@
   <div class="nav-links">
     <a href="{{ prefix }}/" class="on">Overview</a>
     <a href="{{ prefix }}/bigplayer">⚡ Big Player</a>
+    <a href="{{ prefix }}/index_flow">📊 Index Flow</a>
     <a href="{{ prefix }}/pushlog">🔔 Pushes</a>
     <a href="{{ prefix }}/log">📋 Log</a>
   </div>
@@ -38,7 +39,7 @@
     <div style="overflow-x:auto">
       <table><thead><tr>
         <th onclick="srt(0)">Symbol</th>
-        <th onclick="srt(1)">Name</th>
+        <th>Index</th>
         <th onclick="srt(2)">Sector</th>
         <th onclick="srt(3)">Last ₹</th>
         <th onclick="srt(4)">Open</th>
@@ -90,7 +91,15 @@ async function load() {
   document.getElementById('mbadge').innerHTML = d.market_open
     ? '<span class="badge live"><span class="dot"></span>LIVE</span>'
     : '<span class="badge closed">CLOSED</span>';
+  const calToday = new Date().toISOString().slice(0,10);
+  const dataDate = d.data_date || calToday;
+  const dateLabel = dataDate === calToday ? 'Today' : dataDate;
   document.getElementById('asof').textContent = 'Updated '+(d.as_of||'').substring(11,19)+' IST';
+  document.querySelector('.sec-title').textContent = `All Symbols — ${dateLabel}`;
+  if (dataDate !== calToday) {
+    document.getElementById('mbadge').innerHTML =
+      '<span class="badge closed">HOLIDAY / NO DATA TODAY</span>';
+  }
   all = d.symbols || [];
   filt();
   cd = 60;
@@ -99,12 +108,13 @@ async function load() {
 function filt() {
   const q = document.getElementById('q').value.toLowerCase();
   let rows = q ? all.filter(r=>[(r.symbol||''),(r.name||''),(r.sector||'')].some(s=>s.toLowerCase().includes(q))) : all;
-  const keys = ['symbol','name','sector','last_price','day_open','day_high','day_low','total_vol',
+  const keys = ['symbol','_idx','sector','last_price','day_open','day_high','day_low','total_vol',
                 'total_cr','big_buy_cr','big_sell_cr','_net','_bias','week52_high','week52_low','pe_ratio'];
   rows = [...rows].sort((a,b) => {
     let av, bv;
-    if (keys[sc]==='_net')  { av=(a.big_buy_cr||0)-(a.big_sell_cr||0); bv=(b.big_buy_cr||0)-(b.big_sell_cr||0); }
+    if      (keys[sc]==='_net')  { av=(a.big_buy_cr||0)-(a.big_sell_cr||0); bv=(b.big_buy_cr||0)-(b.big_sell_cr||0); }
     else if (keys[sc]==='_bias') { av=a.total_cr?((a.big_buy_cr||0)/a.total_cr):0; bv=b.total_cr?((b.big_buy_cr||0)/b.total_cr):0; }
+    else if (keys[sc]==='_idx')  { av=a.indices||''; bv=b.indices||''; }
     else { av=a[keys[sc]]; bv=b[keys[sc]]; }
     if (av==null) av = sa?Infinity:-Infinity;
     if (bv==null) bv = sa?Infinity:-Infinity;
@@ -119,9 +129,13 @@ function filt() {
       : r.big_sell_cr>r.big_buy_cr
         ? `<span class="tag tsell">SELL ${bs}%</span>`
         : '<span class="tag tneut">NEUTRAL</span>';
+    const idxBadges = (r.indices||'').split(',').filter(Boolean).map(i => {
+      const cls = {NI:'idx-ni',BN:'idx-bn',FN:'idx-fn',MS:'idx-ms'}[i] || 'idx-other';
+      return `<span class="idx-badge ${cls}">${i}</span>`;
+    }).join('');
     return `<tr>
       <td><span class="sym" onclick="go('${r.symbol}')">${r.symbol}</span></td>
-      <td class="sub" style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.name||'—'}</td>
+      <td style="white-space:nowrap">${idxBadges||'<span class="sub">—</span>'}</td>
       <td class="sub" style="font-size:11px">${r.sector||'—'}</td>
       <td>${f(r.last_price)}</td><td class="sub">${f(r.day_open)}</td>
       <td class="green">${f(r.day_high)}</td><td class="red">${f(r.day_low)}</td>
