@@ -29,7 +29,7 @@ nse_bp = Blueprint(
 
 DB   = os.path.join(os.path.dirname(os.path.abspath(__file__)), "nse_intraday.db")
 IST  = pytz.timezone("Asia/Kolkata")
-PORT = 8080
+PORT = 8090
 
 _COLORS = ['#58a6ff','#bc8cff','#3fb950','#ffa500','#f85149','#79c0ff',
            '#d2a8ff','#56d364','#ffd700','#ff6b6b','#4fc3f7','#ce93d8',
