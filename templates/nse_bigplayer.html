@@ -105,7 +105,7 @@
         <span class="mx" onclick="cmClose()">✕</span>
       </div>
     </div>
-    <div class="chart-hint">🖱 Scroll to zoom · Click+Drag to pan · 🟢 = 1Cr+ Buy &nbsp;·&nbsp; 🔴 = 1Cr+ Sell</div>
+
     <div style="position:relative;height:290px"><canvas id="mc"></canvas></div>
     <div class="chart-sep"></div>
     <div class="vol-lbl">Volume</div>
@@ -404,7 +404,13 @@ async function openModal(sym, resetTf=true) {
 
   const d    = await fetch(BASE+'/api/intraday/'+sym+'?days='+curDays).then(r=>r.json()).catch(()=>({}));
   const bars = d.bars || [];
-  document.getElementById('mname').textContent = bars.length ? bars.length+' bars' : 'no data';
+  const bc = bars.length ? bars.length+' bars' : 'no data';
+  const rec0 = bpAll.find(r=>r.symbol===sym);
+  const ibadges = rec0 ? (rec0.indices||'').split(',').filter(Boolean).map(i => {
+    const cls = {NI:'idx-ni',BN:'idx-bn',FN:'idx-fn',MS:'idx-ms'}[i]||'idx-other';
+    return `<span class="idx-badge ${cls}">${i}</span>`;
+  }).join('') : '';
+  document.getElementById('mname').innerHTML = bc + (ibadges ? ' &nbsp; '+ibadges : '');
 
   const labels   = bars.map(b => curDays===1 ? tl(b.t) : b.t.substring(5,16));
   const maxTicks = curDays>90 ? 10 : curDays>14 ? 14 : 20;
