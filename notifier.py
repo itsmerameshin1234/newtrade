@@ -66,14 +66,17 @@ def _get_top6(today: str) -> list:
     return result
 
 
-def _send_push(title: str, body: str, sent_at: str):
-    try:
-        pb = pushbullet.Pushbullet(PUSHBULLET_TOKEN)
-        pb.push_note(title, body)
-        log_push(title, body, sent_at)          # persist to DB
-        print(f"[notify] ✓ Pushed: {title}")
-    except Exception as e:
-        print(f"[notify] ✗ Push failed: {e}")
+def _send_push(title: str, body: str, sent_at: str, real_push: bool = True):
+    log_push(title, body, sent_at)              # always persist to DB
+    if real_push:
+        try:
+            pb = pushbullet.Pushbullet(PUSHBULLET_TOKEN)
+            pb.push_note(title, body)
+            print(f"[notify] ✓ Pushed: {title}")
+        except Exception as e:
+            print(f"[notify] ✗ Push failed: {e}")
+    else:
+        print(f"[notify] DB-only (no real push): {title}")
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────
@@ -161,7 +164,14 @@ def check_and_notify():
 
     body    = "\n".join(lines)
     sent_at = datetime.datetime.now(IST).isoformat()
+
+    # Real push only between 09:30–15:15 IST and only when change is not flip-only
+    t = datetime.datetime.now(IST).time()
+    in_window       = datetime.time(9, 30) <= t <= datetime.time(15, 15)
+    has_non_flip    = any("flipped" not in c for c in changes)
+    do_real_push    = in_window and has_non_flip
+
     print(f"[notify] Change detected: {changes}")
-    _send_push(title, body, sent_at)
+    _send_push(title, body, sent_at, real_push=do_real_push)
 
     _prev_top6 = current

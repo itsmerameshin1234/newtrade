@@ -111,6 +111,7 @@
     <div class="vol-lbl">Volume</div>
     <div style="position:relative;height:100px"><canvas id="mvc"></canvas></div>
     <div class="mstats" id="mstats"></div>
+    <div id="w52bar" style="margin-top:10px;padding:0 2px"></div>
   </div>
 </div>
 
@@ -397,6 +398,7 @@ async function openModal(sym, resetTf=true) {
   document.getElementById('msym').textContent = sym;
   document.getElementById('mname').textContent = '⏳ Loading…';
   document.getElementById('mstats').innerHTML  = '';
+  document.getElementById('w52bar').innerHTML  = '';
   if (mc)  { mc.destroy();  mc=null;  }
   if (mvc) { mvc.destroy(); mvc=null; }
 
@@ -504,6 +506,26 @@ async function openModal(sym, resetTf=true) {
       <div class="card" style="padding:8px"><div class="clbl">Sell ₹Cr</div><div class="cval red" style="font-size:16px">${f(rec.sell_cr)}</div></div>
       <div class="card" style="padding:8px"><div class="clbl">Net ₹Cr</div>
         <div class="cval ${(rec.net_cr||0)>0?'green':'red'}" style="font-size:16px">${f(rec.net_cr)}</div></div>`;
+
+    const w52h = rec.week52_high, w52l = rec.week52_low;
+    const cur  = bars.length ? bars[bars.length - 1].c : rec.last_price;
+    if (w52h && w52l && cur && w52h > w52l) {
+      const pos    = Math.max(0, Math.min(100, ((cur - w52l) / (w52h - w52l)) * 100));
+      const pctH   = (cur / w52h * 100).toFixed(1);
+      const clr    = pos >= 80 ? 'var(--grn)' : pos >= 50 ? 'var(--yel)' : 'var(--red)';
+      const txtClr = pos >= 80 ? 'var(--grn)' : pos >= 50 ? 'var(--yel)' : 'var(--red)';
+      document.getElementById('w52bar').innerHTML = `
+        <div style="font-size:10px;color:var(--sub);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px">52-Week Range</div>
+        <div style="position:relative;height:8px;background:var(--bg3);border-radius:4px;margin:0 1px">
+          <div style="position:absolute;left:0;top:0;height:100%;width:${pos}%;background:${clr};border-radius:4px"></div>
+          <div style="position:absolute;top:-4px;height:16px;width:3px;background:#fff;border-radius:2px;left:calc(${pos}% - 1.5px);box-shadow:0 0 4px rgba(255,255,255,.5)"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;font-size:11px">
+          <span style="color:var(--sub)">₹${f(w52l)}<br><span style="font-size:9px">52W Low</span></span>
+          <span style="color:${txtClr};font-weight:600;text-align:center">₹${f(cur)}&nbsp;&nbsp;<span style="font-size:13px">${pctH}%</span><br><span style="font-size:9px;font-weight:400;color:var(--sub)">of 52W High</span></span>
+          <span style="color:var(--sub);text-align:right">₹${f(w52h)}<br><span style="font-size:9px">52W High</span></span>
+        </div>`;
+    }
   }
 }
 

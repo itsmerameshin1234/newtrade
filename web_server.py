@@ -207,6 +207,17 @@ def api_bigplayer():
             pts.append([r['t'], cum])
         cum_flows[sym] = pts
 
+    # 52-week high/low and last price for each symbol
+    sym_meta = {}
+    if today_bp:
+        syms_list = [r['symbol'] for r in today_bp]
+        ph2 = ','.join('?' * len(syms_list))
+        for r in conn.execute(f'''
+            SELECT symbol, week52_high, week52_low
+            FROM symbol_info WHERE symbol IN ({ph2})
+        ''', syms_list).fetchall():
+            sym_meta[r['symbol']] = dict(r)
+
     conn.close()
 
     result = []
@@ -219,6 +230,9 @@ def api_bigplayer():
         avg_t = a.get('avg_total')
         d['spike_ratio'] = round(d['total_cr'] / avg_t, 2) if avg_t and avg_t > 0 else None
         d['indices'] = INDEX_MAP.get(d['symbol'], '')
+        sm = sym_meta.get(d['symbol'], {})
+        d['week52_high'] = sm.get('week52_high')
+        d['week52_low']  = sm.get('week52_low')
         result.append(d)
 
     return jsonify({
