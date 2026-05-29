@@ -23,7 +23,7 @@ def main():
     ensure_table()              # create bars table if not exists
     ensure_symbol_info_table()  # create symbol_info table if not exists (no-op if exists)
     ensure_push_log_table()     # create push_log table if not exists
-    clear_push_log()            # fresh slate — today's pushes only
+    clear_push_log()            # purge push_log records older than 12 hrs
     purge_old_data()            # drop rows older than 375 days (TTL equivalent)
 
     print("=" * 50)

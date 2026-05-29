@@ -113,7 +113,7 @@ def ensure_symbol_info_table(conn: sqlite3.Connection | None = None) -> None:
 # ── push_log table ────────────────────────────────────────────────────────────
 
 def ensure_push_log_table(conn: sqlite3.Connection | None = None) -> None:
-    """Create the push_log table (cleared every startup, holds today's pushes)."""
+    """Create the push_log table (holds push notification records)."""
     _owned = conn is None
     if _owned:
         conn = get_connection()
@@ -133,14 +133,20 @@ def ensure_push_log_table(conn: sqlite3.Connection | None = None) -> None:
 
 
 def clear_push_log(conn: sqlite3.Connection | None = None) -> None:
-    """Truncate push_log — called once at startup for a clean slate."""
+    """Delete push_log records older than 12 hours — called once at startup."""
     _owned = conn is None
     if _owned:
         conn = get_connection()
     try:
-        conn.execute("DELETE FROM push_log")
+        cutoff = (
+            datetime.datetime.now(datetime.timezone.utc)
+            - datetime.timedelta(hours=12)
+        ).isoformat()
+        cur = conn.execute("DELETE FROM push_log WHERE sent_at < ?", (cutoff,))
         conn.commit()
-        print("[db] push_log cleared.")
+        deleted = cur.rowcount
+        if deleted:
+            print(f"[db] Purged {deleted} push_log records older than 12 hrs.")
     finally:
         if _owned:
             conn.close()
