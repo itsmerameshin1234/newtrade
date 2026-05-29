@@ -511,7 +511,7 @@ async function openModal(sym, resetTf=true) {
     const cur  = bars.length ? bars[bars.length - 1].c : rec.last_price;
     if (w52h && w52l && cur && w52h > w52l) {
       const pos    = Math.max(0, Math.min(100, ((cur - w52l) / (w52h - w52l)) * 100));
-      const pctH   = (cur / w52h * 100).toFixed(1);
+      const pctH   = pos.toFixed(1);
       const clr    = pos >= 80 ? 'var(--grn)' : pos >= 50 ? 'var(--yel)' : 'var(--red)';
       const txtClr = pos >= 80 ? 'var(--grn)' : pos >= 50 ? 'var(--yel)' : 'var(--red)';
       document.getElementById('w52bar').innerHTML = `
@@ -522,7 +522,7 @@ async function openModal(sym, resetTf=true) {
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;font-size:11px">
           <span style="color:var(--sub)">₹${f(w52l)}<br><span style="font-size:9px">52W Low</span></span>
-          <span style="color:${txtClr};font-weight:600;text-align:center">₹${f(cur)}&nbsp;&nbsp;<span style="font-size:13px">${pctH}%</span><br><span style="font-size:9px;font-weight:400;color:var(--sub)">of 52W High</span></span>
+          <span style="color:${txtClr};font-weight:600;text-align:center">₹${f(cur)}&nbsp;&nbsp;<span style="font-size:13px">${pctH}%</span><br><span style="font-size:9px;font-weight:400;color:var(--sub)">in 52W Range</span></span>
           <span style="color:var(--sub);text-align:right">₹${f(w52h)}<br><span style="font-size:9px">52W High</span></span>
         </div>`;
     }

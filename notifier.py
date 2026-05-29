@@ -38,6 +38,13 @@ def _cr(val: float) -> str:
     """Format crore value compactly: 2007 → ₹2007Cr, 85.3 → ₹85Cr"""
     return f"₹{val:,.0f}Cr"
 
+def _52w_pct(r: dict) -> str:
+    h, l, p = r.get('week52_high'), r.get('week52_low'), r.get('cur_price')
+    if h and l and p and h > l:
+        pct = (p - l) / (h - l) * 100
+        return f"{pct:.1f}%"
+    return ""
+
 
 def _get_top6(today: str) -> list:
     import sqlite3 as _sqlite3
@@ -45,16 +52,21 @@ def _get_top6(today: str) -> list:
     conn.row_factory = _sqlite3.Row
     try:
         rows = conn.execute('''
-            SELECT symbol,
-                   ROUND(SUM(CASE WHEN bs=1  THEN ac ELSE 0 END), 2) AS buy_cr,
-                   ROUND(SUM(CASE WHEN bs=-1 THEN ac ELSE 0 END), 2) AS sell_cr,
-                   ROUND(SUM(ac), 2)                                  AS total_cr
-            FROM bars
-            WHERE DATE(t) = ? AND ac >= 1
-            GROUP BY symbol
+            SELECT b.symbol,
+                   ROUND(SUM(CASE WHEN b.bs=1  THEN b.ac ELSE 0 END), 2) AS buy_cr,
+                   ROUND(SUM(CASE WHEN b.bs=-1 THEN b.ac ELSE 0 END), 2) AS sell_cr,
+                   ROUND(SUM(b.ac), 2)                                    AS total_cr,
+                   si.week52_high,
+                   si.week52_low,
+                   (SELECT c FROM bars WHERE symbol = b.symbol AND DATE(t) = ?
+                    ORDER BY t DESC LIMIT 1)                               AS cur_price
+            FROM bars b
+            LEFT JOIN symbol_info si ON si.symbol = b.symbol
+            WHERE DATE(b.t) = ? AND b.ac >= 1
+            GROUP BY b.symbol
             ORDER BY total_cr DESC
             LIMIT 6
-        ''', (today,)).fetchall()
+        ''', (today, today)).fetchall()
     finally:
         conn.close()
 
@@ -152,9 +164,11 @@ def check_and_notify():
         else:
             rank_tag = "  ← NEW"
 
+        pct52 = _52w_pct(r)
+        pct_str = f"  52W:{pct52}" if pct52 else ""
         lines.append(
             f"#{i} {_emoji(r['bias'])} {s:<12} {_cr(r['total_cr']):>10}  "
-            f"{r['bias']}{rank_tag}"
+            f"{r['bias']}{rank_tag}{pct_str}"
         )
 
     lines.append("")
