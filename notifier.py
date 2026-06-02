@@ -179,11 +179,8 @@ def check_and_notify():
     body    = "\n".join(lines)
     sent_at = datetime.datetime.now(IST).isoformat()
 
-    # Real push only between 09:30–15:15 IST and only when change is not flip-only
-    t = datetime.datetime.now(IST).time()
-    in_window       = datetime.time(9, 30) <= t <= datetime.time(15, 15)
     has_non_flip    = any("flipped" not in c for c in changes)
-    do_real_push    = in_window and has_non_flip
+    do_real_push    = has_non_flip
 
     print(f"[notify] Change detected: {changes}")
     _send_push(title, body, sent_at, real_push=do_real_push)
