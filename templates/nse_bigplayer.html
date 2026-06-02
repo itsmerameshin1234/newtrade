@@ -321,7 +321,7 @@ function render(d) {
 }
 
 function renderAlerts() {
-  const spikes = bpAll.filter(r=>spikeVal(r)!=null && spikeVal(r)>=1.5)
+  const spikes = bpAll.filter(r=>spikeVal(r)!=null && spikeVal(r)>=1.0)
                       .sort((a,b)=>spikeVal(b)-spikeVal(a));
   const asec = document.getElementById('alert-sec');
   if (spikes.length) {
@@ -385,7 +385,7 @@ function filt() {
     let spk = '<span class="sub">—</span>';
     if (sv != null) {
       spk = sv>=3 ? `<span class="spk-hi">${sv}×</span>`
-          : sv>=1.5 ? `<span class="spk-md">${sv}×</span>`
+          : sv>=1.0 ? `<span class="spk-md">${sv}×</span>`
           : `<span class="sub">${sv}×</span>`;
     }
     const tot = (r.buy_cr||0)+(r.sell_cr||0);

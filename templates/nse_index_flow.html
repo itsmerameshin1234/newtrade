@@ -107,7 +107,7 @@ function render(d) {
     const breadthPct = active>0 ? Math.round(buying/active*100) : 0;
     const spkHtml = spike==null ? '<span class="sub">no hist</span>'
       : spike>=3 ? `<span class="spk-hi">${spike}×</span>`
-      : spike>=1.5 ? `<span class="spk-md">${spike}×</span>`
+      : spike>=1.0 ? `<span class="spk-md">${spike}×</span>`
       : `<span class="sub">${spike}×</span>`;
 
     return `<div class="idx-card">

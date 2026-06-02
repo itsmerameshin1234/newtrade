@@ -31,7 +31,7 @@ DEFAULT_LB   = 5            # default lookback driving ranking / push order
 # ── Noise guards ──────────────────────────────────────────────────────────────
 MIN_BARS_ELAPSED = 5        # need a few minutes of data before judging pace
 MIN_EXPECTED_CR  = 2.0      # ₹Cr floor on the denominator → kills early-session 10×s
-SPIKE_NOTABLE    = 1.5      # a symbol is "spiking" once it crosses this multiple
+SPIKE_NOTABLE    = 1.0      # a symbol is "spiking" once it crosses this multiple
 
 
 def bars_elapsed_from_ts(latest_ts: str) -> int:
