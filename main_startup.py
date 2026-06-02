@@ -2,13 +2,14 @@ import time
 import datetime
 from fetchday import fetch_and_store
 from db_setup import ensure_table, ensure_symbol_info_table, ensure_push_log_table, clear_push_log, purge_old_data
-from notifier import check_and_notify_spikes
+from notifier import check_and_notify_spikes, notify_data_outage
 
 # ── market window ─────────────────────────────────────────────────────────────
 MARKET_OPEN  = (9,  15)   # 09:15
 MARKET_CLOSE = (15, 35)   # 15:35 — 5-min buffer to ensure last bar (15:29) is captured
 
-CHECK_EVERY_SECS = 20     # poll interval — fine enough to never miss a minute
+CHECK_EVERY_SECS    = 20  # poll interval — fine enough to never miss a minute
+DATA_FAIL_THRESHOLD = 3   # consecutive yfinance failures before a one-shot alert
 
 
 def in_market_hours(now: datetime.datetime) -> bool:
@@ -17,7 +18,9 @@ def in_market_hours(now: datetime.datetime) -> bool:
 
 
 def main():
-    last_run_minute = None          # (hour, minute) of last successful run
+    last_run_minute   = None        # (hour, minute) of last attempted run
+    fetch_fail_streak = 0           # consecutive yfinance fetch failures
+    data_alert_sent   = False       # one-shot guard — re-armed on next success
 
     # ── one-time DB init ──────────────────────────────────────────────────────
     ensure_table()              # create bars table if not exists
@@ -46,14 +49,31 @@ def main():
                       f"Minute {cur_min[0]:02d}:{cur_min[1]:02d} — starting fetch ...")
                 try:
                     fetch_and_store()
-                    check_and_notify_spikes()   # push if spike leaderboard changed
                 except Exception as e:
-                    print(f"  [ERROR] {e}")
+                    # yfinance / fetch failure — count consecutive misses
+                    fetch_fail_streak += 1
+                    print(f"  [ERROR] fetch failed ({fetch_fail_streak}×): {e}")
+                    if fetch_fail_streak >= DATA_FAIL_THRESHOLD and not data_alert_sent:
+                        try:
+                            notify_data_outage(fetch_fail_streak, str(e))
+                            print("  [notify] Data-outage alert sent (one-shot)")
+                        except Exception as ne:
+                            print(f"  [notify ERROR] {ne}")
+                        data_alert_sent = True   # suppress until a fetch succeeds
+                else:
+                    # Success — reset the streak and re-arm the alert
+                    if fetch_fail_streak:
+                        print(f"  [recovery] yfinance OK after "
+                              f"{fetch_fail_streak} failure(s)")
+                    fetch_fail_streak = 0
+                    data_alert_sent   = False
+                    try:
+                        check_and_notify_spikes()   # push if spike leaderboard changed
+                    except Exception as e:
+                        print(f"  [notify ERROR] {e}")
                 finally:
-                    # Always mark this minute as attempted.
-                    # Even on error we don't retry within the same minute —
-                    # next fetch (next minute) will pick up the corrected data
-                    # via upsert anyway.
+                    # Always mark this minute as attempted — no retry within the
+                    # same minute; next minute's fetch upserts any corrections.
                     last_run_minute = cur_min
 
         else:

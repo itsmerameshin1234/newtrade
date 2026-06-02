@@ -192,6 +192,22 @@ def check_and_notify():
 
 # ── Spike leaderboard notifier ────────────────────────────────────────────────
 
+def notify_data_outage(fail_count: int, detail: str = ""):
+    """
+    One-shot alert when the yfinance feed has failed `fail_count` polls in a row.
+    Sent once when the streak hits the threshold; the caller suppresses repeats
+    until a successful fetch re-arms it. Always logged to push_log.
+    """
+    now_str = datetime.datetime.now(IST).strftime('%H:%M')
+    title   = f"⚠️ Data feed down  [{now_str}]"
+    body    = (f"yfinance fetch failed {fail_count}× in a row — bar collection is "
+               f"stalled, no new data until it recovers.")
+    if detail:
+        body += f"\n\n{detail[:200]}"
+    sent_at = datetime.datetime.now(IST).isoformat()
+    _send_push(title, body, sent_at, real_push=True)
+
+
 def _spike_bias(net_cr: float) -> str:
     if net_cr > 0:   return "BUY"
     if net_cr < 0:   return "SELL"

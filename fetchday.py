@@ -35,8 +35,11 @@ def fetch_and_store() -> int:
             progress=False,
         )
     except Exception as e:
+        # Surface the failure to the caller so it can count consecutive
+        # yfinance outages. (data.empty below is NOT an error — that's a
+        # closed market / holiday and still returns 0 normally.)
         print(f"  [yfinance ERROR] Download failed: {e}")
-        return 0
+        raise
 
     if data.empty:
         print("  No data returned — market closed / weekend / holiday.")
