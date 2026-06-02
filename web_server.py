@@ -16,6 +16,7 @@ from flask import (Blueprint, Flask, jsonify, render_template,
                    Response, current_app)
 from symbol_common import symbols as _sc_symbols
 INDEX_MAP = {sym: idx for _, sym, idx in _sc_symbols}
+from spike import compute_spikes
 import pytz
 
 LOG_FILE = "/home/ramesh/log/newtrade.log"
@@ -218,6 +219,10 @@ def api_bigplayer():
         ''', syms_list).fetchall():
             sym_meta[r['symbol']] = dict(r)
 
+    # Pace-based spike (today's cumulative ₹Cr vs the symbol's daily budget,
+    # normalized for elapsed session bars) for 2d / 5d / 10d lookbacks.
+    spikes = compute_spikes(conn, today)
+
     conn.close()
 
     result = []
@@ -227,8 +232,10 @@ def api_bigplayer():
         d['avg_buy_10d']   = a.get('avg_buy')
         d['avg_sell_10d']  = a.get('avg_sell')
         d['avg_total_10d'] = a.get('avg_total')
-        avg_t = a.get('avg_total')
-        d['spike_ratio'] = round(d['total_cr'] / avg_t, 2) if avg_t and avg_t > 0 else None
+        sp = spikes.get(d['symbol'], {})
+        for k in ('spike_2d', 'spike_5d', 'spike_10d',
+                  'avg_cr_2d', 'avg_cr_5d', 'avg_cr_10d', 'bars_elapsed'):
+            d[k] = sp.get(k)
         d['indices'] = INDEX_MAP.get(d['symbol'], '')
         sm = sym_meta.get(d['symbol'], {})
         d['week52_high'] = sm.get('week52_high')
@@ -388,13 +395,39 @@ def api_intraday(symbol):
     days = max(1, min(days, 365))
     conn = get_conn()
 
+    pace = {}
     if days == 1:
         today = effective_date(conn)
+        sym_u = symbol.upper()
         bars = conn.execute(
             "SELECT t, o, h, l, c, v, ROUND(ac,4) as ac, bs "
             "FROM bars WHERE symbol=? AND DATE(t)=? ORDER BY t",
-            (symbol.upper(), today)
+            (sym_u, today)
         ).fetchall()
+
+        # Daily big-player ₹Cr budget over the last 2 / 5 / 10 trading dates,
+        # used to draw the 2d/5d/10d pace lines in the modal. Use the *global*
+        # last-10 dates (not per-symbol) with zero-fill, so these averages match
+        # exactly what compute_spikes() uses for the table/push spike numbers.
+        hist_dates = [r[0] for r in conn.execute(
+            "SELECT DISTINCT DATE(t) FROM bars WHERE DATE(t)<? "
+            "ORDER BY DATE(t) DESC LIMIT 10", (today,)
+        ).fetchall()]
+        day_tot = {}
+        if hist_dates:
+            ph = ','.join('?' * len(hist_dates))
+            for r in conn.execute(
+                f"SELECT DATE(t) AS dt, ROUND(SUM(ac),2) AS tot FROM bars "
+                f"WHERE symbol=? AND ac>=1 AND DATE(t) IN ({ph}) GROUP BY dt",
+                [sym_u] + hist_dates
+            ).fetchall():
+                day_tot[r['dt']] = r['tot'] or 0
+        for k in (2, 5, 10):
+            sub = hist_dates[:k]
+            pace[f'avg_cr_{k}d'] = (
+                round(sum(day_tot.get(d, 0) for d in sub) / len(sub), 2)
+                if sub else None
+            )
     else:
         # Fetch last `days` distinct trading dates
         dates = [r[0] for r in conn.execute(
@@ -413,7 +446,7 @@ def api_intraday(symbol):
             bars = []
 
     conn.close()
-    return jsonify({'symbol': symbol.upper(), 'bars': [dict(r) for r in bars]})
+    return jsonify({'symbol': symbol.upper(), 'bars': [dict(r) for r in bars], 'pace': pace})
 
 
 @nse_bp.route('/api/pushlog')

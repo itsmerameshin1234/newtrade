@@ -2,7 +2,7 @@ import time
 import datetime
 from fetchday import fetch_and_store
 from db_setup import ensure_table, ensure_symbol_info_table, ensure_push_log_table, clear_push_log, purge_old_data
-from notifier import check_and_notify
+from notifier import check_and_notify_spikes
 
 # ── market window ─────────────────────────────────────────────────────────────
 MARKET_OPEN  = (9,  15)   # 09:15
@@ -46,7 +46,7 @@ def main():
                       f"Minute {cur_min[0]:02d}:{cur_min[1]:02d} — starting fetch ...")
                 try:
                     fetch_and_store()
-                    check_and_notify()      # push if top-6 changed
+                    check_and_notify_spikes()   # push if spike leaderboard changed
                 except Exception as e:
                     print(f"  [ERROR] {e}")
                 finally:

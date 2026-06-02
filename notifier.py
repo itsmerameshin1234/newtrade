@@ -16,12 +16,14 @@ import pushbullet
 import pytz
 
 from db_setup import get_connection, log_push
+from spike import compute_spikes, ranked_spikes, DEFAULT_LB
 
 PUSHBULLET_TOKEN = "o.jf9XoTk0S42G4FkjfhD5PZFiLcWAbj9r"
 IST = pytz.timezone("Asia/Kolkata")
 
 # ── In-memory state (lives for the duration of the process) ───────────────────
-_prev_top6: list = []   # list of dicts: symbol, buy_cr, sell_cr, total_cr, bias
+_prev_top6:   list = []   # list of dicts: symbol, buy_cr, sell_cr, total_cr, bias
+_prev_spikes: list = []   # spike leaderboard from the previous poll
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -186,3 +188,120 @@ def check_and_notify():
     _send_push(title, body, sent_at, real_push=do_real_push)
 
     _prev_top6 = current
+
+
+# ── Spike leaderboard notifier ────────────────────────────────────────────────
+
+def _spike_bias(net_cr: float) -> str:
+    if net_cr > 0:   return "BUY"
+    if net_cr < 0:   return "SELL"
+    return "NEUTRAL"
+
+
+def check_and_notify_spikes():
+    """
+    Pace-based spike alert. Ranks symbols by how far today's cumulative big-player
+    ₹Cr is running ahead of their own daily budget (default 5-day lookback), and
+    pushes only when the spike *leaderboard* reshuffles — a symbol enters, drops,
+    or moves ≥2 ranks. Each line shows the 2d / 5d / 10d multiples so you can see
+    which windows are firing. Runs every poll; safe to call alongside the top-6.
+    """
+    global _prev_spikes
+
+    today = datetime.datetime.now(IST).strftime('%Y-%m-%d')
+    conn  = get_connection()
+    import sqlite3 as _sqlite3
+    conn.row_factory = _sqlite3.Row
+    try:
+        spikes  = compute_spikes(conn, today)
+        current = ranked_spikes(spikes, lookback=DEFAULT_LB, top=6)
+        # Attach 52-week position + last price for the leaderboard symbols
+        if current:
+            syms = [r['symbol'] for r in current]
+            ph   = ','.join('?' * len(syms))
+            for m in conn.execute(f'''
+                SELECT si.symbol, si.week52_high, si.week52_low,
+                       (SELECT c FROM bars WHERE symbol=si.symbol AND DATE(t)=?
+                        ORDER BY t DESC LIMIT 1) AS cur_price
+                FROM symbol_info si WHERE si.symbol IN ({ph})
+            ''', [today] + syms).fetchall():
+                r = next(x for x in current if x['symbol'] == m['symbol'])
+                r['week52_high'] = m['week52_high']
+                r['week52_low']  = m['week52_low']
+                r['cur_price']   = m['cur_price']
+    finally:
+        conn.close()
+
+    # ── First call / nothing spiking: just store baseline ─────────────────────
+    if not _prev_spikes:
+        _prev_spikes = current
+        if current:
+            print(f"[notify] Baseline spikes: {[r['symbol'] for r in current]}")
+        return
+
+    prev_syms = [r['symbol'] for r in _prev_spikes]
+    curr_syms = [r['symbol'] for r in current]
+    prev_map  = {r['symbol']: r for r in _prev_spikes}
+    curr_map  = {r['symbol']: r for r in current}
+
+    # Order/membership changes — these are what actually fire the push
+    order_changes = []
+    for s in curr_syms:
+        if s not in prev_syms:
+            order_changes.append(f"{s} entered spike list")
+    for s in prev_syms:
+        if s not in curr_syms:
+            order_changes.append(f"{s} cooled off")
+    for s in curr_syms:
+        if s in prev_syms:
+            old_rank = prev_syms.index(s) + 1
+            new_rank = curr_syms.index(s) + 1
+            if abs(new_rank - old_rank) >= 2:
+                arrow = "↑" if new_rank < old_rank else "↓"
+                order_changes.append(f"{s} {arrow} #{old_rank}→#{new_rank}")
+
+    # Bias flips for symbols staying in the list — shown for context, but a flip
+    # on its own does NOT trigger a push (only an order/membership change does)
+    flip_changes = []
+    for s in curr_syms:
+        if s in prev_map:
+            old_bias = _spike_bias(prev_map[s]['net_cr'])
+            new_bias = _spike_bias(curr_map[s]['net_cr'])
+            if old_bias != new_bias:
+                flip_changes.append(f"{s} flipped {old_bias} → {new_bias}")
+
+    # Log every change-minute to the DB; real Pushbullet only on order changes
+    changes = order_changes + flip_changes
+    if not changes:
+        _prev_spikes = current
+        return
+
+    now_str = datetime.datetime.now(IST).strftime('%H:%M')
+    title   = f"🚀 Spike Leaderboard  [{now_str}]"
+
+    def _mult(v):
+        return f"{v:g}×" if v is not None else "—"
+
+    lines = []
+    for i, r in enumerate(current, 1):
+        bias  = _spike_bias(r['net_cr'])
+        pct52 = _52w_pct(r)
+        p52   = f"  52W:{pct52}" if pct52 else ""
+        lines.append(
+            f"#{i} {_emoji(bias)} {r['symbol']:<11} "
+            f"2d {_mult(r['spike_2d'])} · 5d {_mult(r['spike_5d'])} · "
+            f"10d {_mult(r['spike_10d'])}  {bias}{p52}"
+        )
+    lines.append("")
+    lines.append("Changes:")
+    for c in changes:
+        lines.append(f"  • {c}")
+
+    body    = "\n".join(lines)
+    sent_at = datetime.datetime.now(IST).isoformat()
+
+    do_real_push = bool(order_changes)   # flip-only → DB log, no real push
+    print(f"[notify] Spike change: {changes} (real_push={do_real_push})")
+    _send_push(title, body, sent_at, real_push=do_real_push)
+
+    _prev_spikes = current

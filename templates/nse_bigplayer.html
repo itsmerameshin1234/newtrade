@@ -40,7 +40,14 @@
   </div>
 
   <div id="alert-sec" style="display:none">
-    <div class="sec-title">⚡ Unusual Activity — Spike vs 10d Average</div>
+    <div class="toolbar" style="margin-bottom:6px">
+      <div class="sec-title" style="margin:0">⚡ Unusual Activity — Spike vs <span id="lb-label">5d</span> Pace</div>
+      <div class="tf-bar" id="spk-bar" style="margin-left:auto">
+        <button class="tf-btn"        id="spk-2"  onclick="setSpikeLB(2)">2d</button>
+        <button class="tf-btn tf-act" id="spk-5"  onclick="setSpikeLB(5)">5d</button>
+        <button class="tf-btn"        id="spk-10" onclick="setSpikeLB(10)">10d</button>
+      </div>
+    </div>
     <div class="alerts" id="alerts"></div>
   </div>
 
@@ -76,7 +83,7 @@
         <th>Index</th>
         <th>Big Bars</th><th>Buy ₹Cr</th><th>Sell ₹Cr</th>
         <th>Net ₹Cr</th><th>Bias</th>
-        <th>10d Avg ₹Cr</th><th>Spike</th><th>Buy / Sell Split</th>
+        <th id="avg-th">5d Avg ₹Cr</th><th>Spike</th><th>Buy / Sell Split</th>
       </tr></thead><tbody id="tb"></tbody></table>
     </div>
   </div>
@@ -110,6 +117,11 @@
     <div class="chart-sep"></div>
     <div class="vol-lbl">Volume</div>
     <div style="position:relative;height:100px"><canvas id="mvc"></canvas></div>
+    <div id="mpc-wrap">
+      <div class="chart-sep"></div>
+      <div class="vol-lbl">Big-Player Pace — Today vs 2d / 5d / 10d Budget</div>
+      <div style="position:relative;height:135px"><canvas id="mpc"></canvas></div>
+    </div>
     <div class="mstats" id="mstats"></div>
     <div id="w52bar" style="margin-top:10px;padding:0 2px"></div>
   </div>
@@ -118,7 +130,10 @@
 <script>
 const BASE   = "{{ prefix }}";
 const COLORS = {{ colors|tojson }};
-let bpAll=[], fc=null, cc=null, sc=null, mc=null, mvc=null, curSym=null, curDays=1, cd=60;
+let bpAll=[], fc=null, cc=null, sc=null, mc=null, mvc=null, mpc=null, curSym=null, curDays=1, cd=60;
+let spkLB=5;   // active spike lookback: 2 | 5 | 10 (default 5-day)
+const spikeVal = r => r['spike_'+spkLB+'d'];
+const spikeAvg = r => r['avg_cr_'+spkLB+'d'];
 
 const f  = (v,d=2) => v==null ? '—' : Number(v).toLocaleString('en-IN',{minimumFractionDigits:d,maximumFractionDigits:d});
 const fv = v => { if(!v) return '—'; if(v>=1e7) return (v/1e7).toFixed(2)+'Cr'; if(v>=1e5) return (v/1e5).toFixed(1)+'L'; return v.toLocaleString('en-IN'); };
@@ -167,22 +182,8 @@ function render(d) {
     document.getElementById('bprog').style.width = (hd/10*100)+'%';
   } else { bn.style.display='none'; }
 
-  // Spike alerts
-  const spikes = (bpAll.filter(r=>r.spike_ratio&&r.spike_ratio>=1.5)).sort((a,b)=>b.spike_ratio-a.spike_ratio);
-  const asec = document.getElementById('alert-sec');
-  if (spikes.length) {
-    asec.style.display = 'block';
-    document.getElementById('alerts').innerHTML = spikes.map(r => {
-      const dir  = r.net_cr>0?'ac-buy':r.net_cr<0?'ac-sell':'';
-      const dtag = r.net_cr>0?'<span class="tag tbuy">BUY</span>':r.net_cr<0?'<span class="tag tsell">SELL</span>':'';
-      const scls = r.spike_ratio>=3?'spk-hi':'spk-md';
-      return `<div class="ac ${dir}" onclick="openModal('${r.symbol}')">
-        <div style="font-weight:700">${r.symbol}</div>
-        <div class="sub" style="font-size:11px;margin:2px 0">₹${f(r.total_cr)} Cr</div>
-        <span class="${scls}">${r.spike_ratio}× avg</span> ${dtag}
-      </div>`;
-    }).join('');
-  } else { asec.style.display='none'; }
+  // Spike alerts (driven by the active 2d/5d/10d lookback)
+  renderAlerts();
 
   // ── Intraday flow chart ──────────────────────────────────────────────────
   const tl_data = d.timeline || [];
@@ -316,17 +317,49 @@ function render(d) {
   filt();
 }
 
+function renderAlerts() {
+  const spikes = bpAll.filter(r=>spikeVal(r)!=null && spikeVal(r)>=1.5)
+                      .sort((a,b)=>spikeVal(b)-spikeVal(a));
+  const asec = document.getElementById('alert-sec');
+  if (spikes.length) {
+    asec.style.display = 'block';
+    document.getElementById('alerts').innerHTML = spikes.map(r => {
+      const dir  = r.net_cr>0?'ac-buy':r.net_cr<0?'ac-sell':'';
+      const dtag = r.net_cr>0?'<span class="tag tbuy">BUY</span>':r.net_cr<0?'<span class="tag tsell">SELL</span>':'';
+      const sv   = spikeVal(r);
+      const scls = sv>=3?'spk-hi':'spk-md';
+      return `<div class="ac ${dir}" onclick="openModal('${r.symbol}')">
+        <div style="font-weight:700">${r.symbol}</div>
+        <div class="sub" style="font-size:11px;margin:2px 0">₹${f(r.total_cr)} Cr</div>
+        <span class="${scls}">${sv}× ${spkLB}d</span> ${dtag}
+      </div>`;
+    }).join('');
+  } else { asec.style.display='none'; }
+}
+
+function setSpikeLB(k) {
+  spkLB = k;
+  document.querySelectorAll('#spk-bar .tf-btn').forEach(b=>b.classList.remove('tf-act'));
+  const btn = document.getElementById('spk-'+k);
+  if (btn) btn.classList.add('tf-act');
+  document.getElementById('lb-label').textContent = k+'d';
+  document.getElementById('avg-th').textContent   = k+'d Avg ₹Cr';
+  renderAlerts();
+  filt();
+}
+
 function filt() {
   const q = document.getElementById('q').value.toLowerCase();
   const rows = q ? bpAll.filter(r=>(r.symbol||'').toLowerCase().includes(q)) : bpAll;
   document.getElementById('tb').innerHTML = rows.map(r => {
     const net  = r.net_cr || 0;
     const bias = net>0 ? '<span class="tag tbuy">BUY</span>' : net<0 ? '<span class="tag tsell">SELL</span>' : '<span class="tag tneut">NEUTRAL</span>';
+    const sv = spikeVal(r);
     let spk = '<span class="sub">—</span>';
-    if (r.spike_ratio != null) {
-      spk = r.spike_ratio>=3 ? `<span class="spk-hi">${r.spike_ratio}×</span>`
-          : r.spike_ratio>=1.5 ? `<span class="spk-md">${r.spike_ratio}×</span>`
-          : `<span class="sub">${r.spike_ratio}×</span>`;
+    if (sv != null) {
+      spk = sv>=3 ? `<span class="spk-hi">${sv}×</span>`
+          : sv>=1.5 ? `<span class="spk-md">${sv}×</span>`
+          : `<span class="sub">${sv}×</span>`;
     }
     const tot = (r.buy_cr||0)+(r.sell_cr||0);
     const bw  = tot ? Math.round((r.buy_cr||0)/tot*100) : 50;
@@ -343,7 +376,7 @@ function filt() {
       <td class="red">${f(r.sell_cr)}</td>
       <td>${net>0?`<span class="green">+${f(net)}</span>`:`<span class="red">${f(net)}</span>`}</td>
       <td>${bias}</td>
-      <td class="sub">${r.avg_total_10d!=null ? f(r.avg_total_10d) : '—'}</td>
+      <td class="sub">${spikeAvg(r)!=null ? f(spikeAvg(r)) : '—'}</td>
       <td>${spk}</td>
       <td><div class="split-wrap">
         <span class="green" style="font-size:10px;width:28px">${bw}%</span>
@@ -401,6 +434,7 @@ async function openModal(sym, resetTf=true) {
   document.getElementById('w52bar').innerHTML  = '';
   if (mc)  { mc.destroy();  mc=null;  }
   if (mvc) { mvc.destroy(); mvc=null; }
+  if (mpc) { mpc.destroy(); mpc=null; }
 
   const d    = await fetch(BASE+'/api/intraday/'+sym+'?days='+curDays).then(r=>r.json()).catch(()=>({}));
   const bars = d.bars || [];
@@ -503,6 +537,53 @@ async function openModal(sym, resetTf=true) {
       }
     }
   });
+
+  // Big-Player Pace panel — today's cumulative ₹Cr vs 2d/5d/10d budget lines
+  // (intraday only). Each budget line is the daily average spread evenly across
+  // the 375-bar session, so today crossing above a line = spiking vs that window.
+  const paceWrap = document.getElementById('mpc-wrap');
+  if (curDays===1 && bars.length && d.pace) {
+    paceWrap.style.display = 'block';
+    const sMin = t => { const hh=+t.substring(11,13), mm=+t.substring(14,16);
+                        return Math.max(1, Math.min((hh-9)*60+(mm-15)+1, 375)); };
+    let cum = 0;
+    const cumData = bars.map(b => { if (b.ac>=1) cum += b.ac; return +cum.toFixed(2); });
+    const budget = avg => avg==null ? [] : bars.map(b => +(avg * sMin(b.t) / 375).toFixed(2));
+    const mkLine = (avg,label,color) => ({
+      label, data: budget(avg), borderColor: color, borderWidth: 1.2,
+      borderDash: [5,4], pointRadius: 0, tension: 0, fill: false, hidden: avg==null
+    });
+    mpc = new Chart(document.getElementById('mpc'), {
+      type: 'line',
+      data: { labels, datasets: [
+        { label:'Today ₹Cr', data:cumData, borderColor:'#ffa500',
+          backgroundColor:'rgba(255,165,0,.08)', borderWidth:1.8, tension:.1,
+          fill:true, pointRadius:0 },
+        mkLine(d.pace.avg_cr_2d,  '2d avg',  '#3fb950'),
+        mkLine(d.pace.avg_cr_5d,  '5d avg',  '#58a6ff'),
+        mkLine(d.pace.avg_cr_10d, '10d avg', '#bc8cff'),
+      ]},
+      options: {
+        responsive:true, maintainAspectRatio:false, animation:false,
+        interaction: { mode:'index', intersect:false },
+        plugins: {
+          legend: { display:true, labels:{color:'#8b949e',font:{size:10},boxWidth:18,padding:8} },
+          tooltip: { callbacks: {
+            title: ctx => bars[ctx[0].dataIndex]?.t?.substring(0,16) || '',
+            label: ctx => ctx.dataset.label+': ₹'+f(ctx.parsed.y)+' Cr'
+          }}
+        },
+        scales: {
+          x: { ticks:{color:'#8b949e',maxTicksLimit:maxTicks,font:{size:9}}, grid:{color:'#21262d'} },
+          y: { ticks:{color:'#8b949e',font:{size:9},maxTicksLimit:4,callback:v=>f(v,0)},
+               grid:{color:'#21262d'},
+               title:{display:true,text:'Cumulative ₹Cr',color:'#ffa500',font:{size:10}} }
+        }
+      }
+    });
+  } else {
+    paceWrap.style.display = 'none';
+  }
 
   const rec = bpAll.find(r=>r.symbol===sym);
   if (rec) {
