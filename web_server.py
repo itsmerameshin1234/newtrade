@@ -147,10 +147,13 @@ def api_bigplayer():
                ROUND(SUM(CASE WHEN bs=-1 THEN ac ELSE 0 END), 2)                  as sell_cr,
                ROUND(SUM(ac), 2)                                                   as total_cr,
                ROUND(SUM(CASE WHEN bs=1 THEN ac ELSE 0 END)
-                   - SUM(CASE WHEN bs=-1 THEN ac ELSE 0 END), 2)                  as net_cr
+                   - SUM(CASE WHEN bs=-1 THEN ac ELSE 0 END), 2)                  as net_cr,
+               (SELECT ROUND(c,2) FROM bars b2
+                WHERE b2.symbol=bars.symbol AND DATE(b2.t)=?
+                ORDER BY b2.t DESC LIMIT 1)                                       as last_price
         FROM bars WHERE DATE(t)=? AND ac>=1
         GROUP BY symbol ORDER BY total_cr DESC
-    ''', (today,)).fetchall()
+    ''', (today, today)).fetchall()
 
     # 10-day per-symbol averages
     avg10 = {}

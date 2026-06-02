@@ -79,11 +79,11 @@
     </div>
     <div style="overflow-x:auto">
       <table><thead><tr>
-        <th>Symbol</th>
-        <th>Index</th>
-        <th>Big Bars</th><th>Buy ₹Cr</th><th>Sell ₹Cr</th>
-        <th>Net ₹Cr</th><th>Bias</th>
-        <th id="avg-th">5d Avg ₹Cr</th><th>Spike</th><th>Buy / Sell Split</th>
+        <th onclick="srt(0)">Symbol</th>
+        <th onclick="srt(1)">Index</th>
+        <th onclick="srt(2)">Big Bars</th><th onclick="srt(3)">Buy ₹Cr</th><th onclick="srt(4)">Sell ₹Cr</th>
+        <th onclick="srt(5)">Net ₹Cr</th><th onclick="srt(6)">Bias</th>
+        <th id="avg-th" onclick="srt(7)">5d Avg ₹Cr</th><th onclick="srt(8)">Spike</th><th onclick="srt(9)">52W %</th><th onclick="srt(10)">Buy / Sell Split</th>
       </tr></thead><tbody id="tb"></tbody></table>
     </div>
   </div>
@@ -132,8 +132,11 @@ const BASE   = "{{ prefix }}";
 const COLORS = {{ colors|tojson }};
 let bpAll=[], fc=null, cc=null, sc=null, mc=null, mvc=null, mpc=null, curSym=null, curDays=1, cd=60;
 let spkLB=5;   // active spike lookback: 2 | 5 | 10 (default 5-day)
+let tsc=-1, tsa=false;   // table sort column (-1 = server order) / ascending
 const spikeVal = r => r['spike_'+spkLB+'d'];
 const spikeAvg = r => r['avg_cr_'+spkLB+'d'];
+const w52pct   = r => { const h=r.week52_high, l=r.week52_low, c=r.last_price;
+                        return (h&&l&&c&&h>l) ? Math.max(0,Math.min(100,(c-l)/(h-l)*100)) : null; };
 
 const f  = (v,d=2) => v==null ? '—' : Number(v).toLocaleString('en-IN',{minimumFractionDigits:d,maximumFractionDigits:d});
 const fv = v => { if(!v) return '—'; if(v>=1e7) return (v/1e7).toFixed(2)+'Cr'; if(v>=1e5) return (v/1e5).toFixed(1)+'L'; return v.toLocaleString('en-IN'); };
@@ -350,7 +353,31 @@ function setSpikeLB(k) {
 
 function filt() {
   const q = document.getElementById('q').value.toLowerCase();
-  const rows = q ? bpAll.filter(r=>(r.symbol||'').toLowerCase().includes(q)) : bpAll;
+  let rows = q ? bpAll.filter(r=>(r.symbol||'').toLowerCase().includes(q)) : bpAll;
+  if (tsc >= 0) {
+    const splitPct = r => { const t=(r.buy_cr||0)+(r.sell_cr||0); return t?(r.buy_cr||0)/t:0; };
+    const get = r => {
+      switch (tsc) {
+        case 0:  return r.symbol || '';
+        case 1:  return r.indices || '';
+        case 2:  return r.big_bars;
+        case 3:  return r.buy_cr;
+        case 4:  return r.sell_cr;
+        case 5:
+        case 6:  return r.net_cr;        // Net & Bias both rank by net flow
+        case 7:  return spikeAvg(r);
+        case 8:  return spikeVal(r);
+        case 9:  return w52pct(r);
+        case 10: return splitPct(r);
+      }
+    };
+    rows = [...rows].sort((a,b) => {
+      let av=get(a), bv=get(b);
+      if (av==null) av = tsa?Infinity:-Infinity;
+      if (bv==null) bv = tsa?Infinity:-Infinity;
+      return tsa ? (av>bv?1:-1) : (av<bv?1:-1);
+    });
+  }
   document.getElementById('tb').innerHTML = rows.map(r => {
     const net  = r.net_cr || 0;
     const bias = net>0 ? '<span class="tag tbuy">BUY</span>' : net<0 ? '<span class="tag tsell">SELL</span>' : '<span class="tag tneut">NEUTRAL</span>';
@@ -378,6 +405,10 @@ function filt() {
       <td>${bias}</td>
       <td class="sub">${spikeAvg(r)!=null ? f(spikeAvg(r)) : '—'}</td>
       <td>${spk}</td>
+      <td>${(()=>{ const wp=w52pct(r);
+        return wp==null ? '<span class="sub">—</span>'
+          : `<span style="color:${wp>=80?'var(--grn)':wp>=50?'var(--yel)':'var(--red)'};font-weight:600">${wp.toFixed(0)}%</span>`;
+      })()}</td>
       <td><div class="split-wrap">
         <span class="green" style="font-size:10px;width:28px">${bw}%</span>
         <div class="split-bg"><div class="sb sb-b" style="width:${bw}%"></div><div class="sb sb-s" style="width:${sw}%"></div></div>
@@ -385,6 +416,15 @@ function filt() {
       </div></td>
     </tr>`;
   }).join('');
+}
+
+function srt(c) {
+  if (tsc===c) tsa=!tsa; else { tsc=c; tsa=false; }
+  document.querySelectorAll('th').forEach((t,i) => {
+    t.classList.remove('asc','desc');
+    if (i===c) t.classList.add(tsa?'asc':'desc');
+  });
+  filt();
 }
 
 // ── Modal helpers ────────────────────────────────────────────────────────────
