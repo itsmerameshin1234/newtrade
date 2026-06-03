@@ -80,15 +80,25 @@ def _get_top6(today: str) -> list:
     return result
 
 
+def _within_push_window() -> bool:
+    """Real pushes only fire during market hours: 09:30–15:15 IST."""
+    now = datetime.datetime.now(IST).time()
+    return datetime.time(9, 30) <= now <= datetime.time(15, 15)
+
+
 def _send_push(title: str, body: str, sent_at: str, real_push: bool = True):
-    log_push(title, body, sent_at)              # always persist to DB
-    if real_push:
+    # A real push only goes out when requested AND inside market hours.
+    did_push = real_push and _within_push_window()
+    log_push(title, body, sent_at, real_push=did_push)   # always persist to DB
+    if did_push:
         try:
             pb = pushbullet.Pushbullet(PUSHBULLET_TOKEN)
             pb.push_note(title, body)
             print(f"[notify] ✓ Pushed: {title}")
         except Exception as e:
             print(f"[notify] ✗ Push failed: {e}")
+    elif real_push:
+        print(f"[notify] DB-only (outside 09:30–15:15 window): {title}")
     else:
         print(f"[notify] DB-only (no real push): {title}")
 
@@ -230,7 +240,7 @@ def check_and_notify_spikes():
     conn.row_factory = _sqlite3.Row
     try:
         spikes  = compute_spikes(conn, today)
-        current = ranked_spikes(spikes, lookback=DEFAULT_LB, top=6)
+        current = ranked_spikes(spikes, lookback=DEFAULT_LB, top=5)
         # Attach 52-week position + last price for the leaderboard symbols
         if current:
             syms = [r['symbol'] for r in current]

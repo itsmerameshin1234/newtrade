@@ -456,12 +456,15 @@ def api_intraday(symbol):
 def api_pushlog():
     conn = get_conn()
     rows = conn.execute(
-        "SELECT id, sent_at, title, body FROM push_log ORDER BY sent_at DESC"
+        "SELECT id, sent_at, title, body, real_push FROM push_log ORDER BY sent_at DESC"
     ).fetchall()
     conn.close()
+    pushes    = [dict(r) for r in rows]
+    real_count = sum(1 for p in pushes if p.get('real_push'))
     return jsonify({
-        'pushes':      [dict(r) for r in rows],
-        'count':       len(rows),
+        'pushes':      pushes,
+        'count':       len(pushes),
+        'real_count':  real_count,
         'as_of':       datetime.datetime.now(IST).isoformat(),
         'market_open': is_market_open(),
     })

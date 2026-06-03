@@ -123,9 +123,16 @@ def ensure_push_log_table(conn: sqlite3.Connection | None = None) -> None:
                 id         INTEGER PRIMARY KEY AUTOINCREMENT,
                 sent_at    TEXT    NOT NULL,   -- ISO-8601 IST timestamp
                 title      TEXT    NOT NULL,
-                body       TEXT    NOT NULL
+                body       TEXT    NOT NULL,
+                real_push  INTEGER NOT NULL DEFAULT 0   -- 1 = sent via Pushbullet, 0 = DB-only
             )
         """)
+        # Migrate older DBs that predate the real_push column.
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(push_log)")}
+        if "real_push" not in cols:
+            conn.execute(
+                "ALTER TABLE push_log ADD COLUMN real_push INTEGER NOT NULL DEFAULT 0"
+            )
         conn.commit()
     finally:
         if _owned:
@@ -152,16 +159,20 @@ def clear_push_log(conn: sqlite3.Connection | None = None) -> None:
             conn.close()
 
 
-def log_push(title: str, body: str, sent_at: str,
+def log_push(title: str, body: str, sent_at: str, real_push: bool = False,
              conn: sqlite3.Connection | None = None) -> None:
-    """Insert one push record into push_log."""
+    """Insert one push record into push_log.
+
+    `real_push` records whether a real Pushbullet notification was actually
+    sent (True) or the record is DB-only (False).
+    """
     _owned = conn is None
     if _owned:
         conn = get_connection()
     try:
         conn.execute(
-            "INSERT INTO push_log (sent_at, title, body) VALUES (?, ?, ?)",
-            (sent_at, title, body)
+            "INSERT INTO push_log (sent_at, title, body, real_push) VALUES (?, ?, ?, ?)",
+            (sent_at, title, body, 1 if real_push else 0)
         )
         conn.commit()
     finally:

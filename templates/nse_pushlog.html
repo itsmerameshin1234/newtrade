@@ -44,7 +44,11 @@ async function load() {
   const list   = document.getElementById('push-list');
   const pushes = d.pushes || [];
 
-  document.getElementById('cnt').textContent  = pushes.length+' push'+(pushes.length!==1?'es':'');
+  const realCount = (d.real_count != null)
+    ? d.real_count
+    : pushes.filter(p=>p.real_push).length;
+  document.getElementById('cnt').textContent  =
+    realCount+' real / '+pushes.length+' total';
   document.getElementById('asof').textContent = 'Updated '+(d.as_of||'').substring(11,19)+' IST';
   document.getElementById('mbadge').innerHTML = d.market_open
     ? '<span class="badge live"><span class="dot"></span>LIVE</span>'
@@ -59,10 +63,14 @@ async function load() {
     const timeStr  = (p.sent_at||'').substring(11,19);
     const dateStr  = (p.sent_at||'').substring(0,10);
     const isLatest = i === 0;
+    const pushBadge = p.real_push
+      ? '<span style="color:var(--grn,#16a34a);font-weight:600">🔔 Real</span>'
+      : '<span class="sub">📄 DB-only</span>';
     return `<div class="push-card">
       <div class="push-time">
         ${isLatest ? '<span class="latest-dot"></span><span style="color:var(--blu);font-weight:600">Latest</span>' : ''}
         <span>${dateStr} &nbsp;<b>${timeStr}</b> IST</span>
+        ${pushBadge}
         <span class="sub">#${pushes.length - i}</span>
       </div>
       <div class="push-title">${p.title}</div>
