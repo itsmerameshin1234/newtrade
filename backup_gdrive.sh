@@ -5,7 +5,7 @@
 #
 # Setup (one-time): rclone config  — name the remote "gdrive"
 #
-# Retention: last 2 days for both DB and log (dated files only, no LATEST copy)
+# Retention: latest 2 dated files for both DB and log (count-based, no LATEST copy)
 # Push notifications: sent via Pushbullet at start and on completion
 
 set -uo pipefail          # -u catches undefined vars; NO -e so grep/rclone won't kill us
@@ -70,17 +70,17 @@ else
         rm -f "$TMP_GZ"
     fi
 
-    # Prune DB backups older than 2 days
-    CUTOFF=$(date -d '2 days ago' '+%Y-%m-%d')
-    log "Pruning DB backups older than $CUTOFF ..."
-    while IFS= read -r fname; do
-        fdate="${fname#nse_intraday_}"; fdate="${fdate%.db.gz}"
-        if [[ "$fdate" < "$CUTOFF" ]]; then
+    # Prune DB backups: keep only the latest 2 (by date in filename)
+    KEEP=2
+    log "Pruning DB backups, keeping latest $KEEP ..."
+    mapfile -t DB_FILES < <(rclone lsf "${REMOTE}/db/" 2>/dev/null \
+             | grep -E '^nse_intraday_[0-9]{4}-[0-9]{2}-[0-9]{2}\.db\.gz$' | sort)
+    if (( ${#DB_FILES[@]} > KEEP )); then
+        for fname in "${DB_FILES[@]:0:${#DB_FILES[@]}-KEEP}"; do
             log "  Deleting: $fname"
             rclone deletefile "${REMOTE}/db/${fname}" 2>&1 || true
-        fi
-    done < <(rclone lsf "${REMOTE}/db/" --format "n" 2>/dev/null \
-             | grep -E '^nse_intraday_[0-9]{4}-[0-9]{2}-[0-9]{2}\.db\.gz$' || true)
+        done
+    fi
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -101,17 +101,17 @@ else
         fail "Log upload to Google Drive failed"
     fi
 
-    # Prune log backups older than 2 days
-    CUTOFF=$(date -d '2 days ago' '+%Y-%m-%d')
-    log "Pruning log backups older than $CUTOFF ..."
-    while IFS= read -r fname; do
-        fdate="${fname#newtrade_}"; fdate="${fdate%.log}"
-        if [[ "$fdate" < "$CUTOFF" ]]; then
+    # Prune log backups: keep only the latest 2 (by date in filename)
+    KEEP=2
+    log "Pruning log backups, keeping latest $KEEP ..."
+    mapfile -t LOG_FILES < <(rclone lsf "${REMOTE}/logs/" 2>/dev/null \
+             | grep -E '^newtrade_[0-9]{4}-[0-9]{2}-[0-9]{2}\.log$' | sort)
+    if (( ${#LOG_FILES[@]} > KEEP )); then
+        for fname in "${LOG_FILES[@]:0:${#LOG_FILES[@]}-KEEP}"; do
             log "  Deleting: $fname"
             rclone deletefile "${REMOTE}/logs/${fname}" 2>&1 || true
-        fi
-    done < <(rclone lsf "${REMOTE}/logs/" --format "n" 2>/dev/null \
-             | grep -E '^newtrade_[0-9]{4}-[0-9]{2}-[0-9]{2}\.log$' || true)
+        done
+    fi
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
