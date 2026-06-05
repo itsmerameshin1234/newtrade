@@ -32,6 +32,11 @@ DEFAULT_LB   = 5            # default lookback driving ranking / push order
 MIN_BARS_ELAPSED = 5        # need a few minutes of data before judging pace
 MIN_EXPECTED_CR  = 2.0      # ₹Cr floor on the denominator → kills early-session 10×s
 SPIKE_NOTABLE    = 1.5      # a symbol is "spiking" once it crosses this multiple
+VOL_CONFIRM      = 1.2      # confirmation gate: today's volume pace must also clear
+                            # this multiple of avg_vol_10d, else the ₹Cr spike is
+                            # treated as price-driven / a one-off block and dropped.
+                            # NOTE: the dashboard JS hardcodes the same 1.2 — retune
+                            # both here AND in templates/nse_bigplayer.html.
 
 
 def bars_elapsed_from_ts(latest_ts: str) -> int:
@@ -71,6 +76,18 @@ def compute_spikes(conn, today: str) -> dict:
         ''', hist_dates).fetchall():
             day_tot.setdefault(r['symbol'], {})[r['dt']] = r['tot'] or 0
 
+    # Per-symbol 10-day average daily volume baseline (total volume, all bars).
+    avg_vol = {r['symbol']: r['avg_vol_10d']
+               for r in conn.execute(
+                   "SELECT symbol, avg_vol_10d FROM symbol_info").fetchall()}
+
+    # Today's cumulative *total* volume per symbol (ALL bars, not just big-player —
+    # avg_vol_10d is a total-volume baseline, so the numerator must match).
+    today_vol = {r['symbol']: (r['cum_v'] or 0)
+                 for r in conn.execute(
+                     "SELECT symbol, SUM(v) AS cum_v FROM bars "
+                     "WHERE DATE(t)=? GROUP BY symbol", (today,)).fetchall()}
+
     # Today's cumulative big-player flow + latest bar timestamp per symbol
     today_rows = conn.execute('''
         SELECT symbol,
@@ -90,11 +107,23 @@ def compute_spikes(conn, today: str) -> dict:
         frac    = elapsed / SESSION_BARS
         cum     = r['cum_cr'] or 0
 
+        # Volume pace: today's cumulative volume vs the 10-day daily average,
+        # normalized for elapsed session fraction (same shape as the ₹Cr spike).
+        av_v     = avg_vol.get(sym) or 0
+        cum_v    = today_vol.get(sym, 0)
+        exp_v    = av_v * frac
+        vol_spike = (round(cum_v / exp_v, 2)
+                     if av_v > 0 and exp_v > 0 and elapsed >= MIN_BARS_ELAPSED
+                     else None)
+
         entry = {
             'symbol':       sym,
             'cum_cr':       cum,
             'net_cr':       round((r['buy'] or 0) - (r['sell'] or 0), 2),
             'bars_elapsed': elapsed,
+            'cum_vol':      cum_v,
+            'avg_vol_10d':  av_v or None,
+            'vol_spike':    vol_spike,
         }
         for k in LOOKBACKS:
             avg = _avg_over(sd, hist_dates[:k])
@@ -110,10 +139,18 @@ def compute_spikes(conn, today: str) -> dict:
 
 
 def ranked_spikes(spikes: dict, lookback: int = DEFAULT_LB,
-                  top: int = 6, min_spike: float = SPIKE_NOTABLE) -> list:
-    """Symbols currently spiking ≥ min_spike on `lookback`, highest first."""
+                  top: int = 6, min_spike: float = SPIKE_NOTABLE,
+                  vol_confirm: float = VOL_CONFIRM) -> list:
+    """
+    Symbols currently spiking ≥ min_spike on `lookback`, highest first.
+
+    A symbol must clear BOTH its ₹Cr pace (min_spike) AND its volume pace
+    (vol_confirm) — the volume confirmation gate filters ₹Cr spikes that aren't
+    backed by genuinely elevated turnover (price-driven moves / one-off blocks).
+    """
     key  = f'spike_{lookback}d'
     rows = [s for s in spikes.values()
-            if s.get(key) is not None and s[key] >= min_spike]
+            if s.get(key) is not None and s[key] >= min_spike
+            and s.get('vol_spike') is not None and s['vol_spike'] >= vol_confirm]
     rows.sort(key=lambda s: s[key], reverse=True)
     return rows[:top]

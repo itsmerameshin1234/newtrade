@@ -316,7 +316,8 @@ def check_and_notify_spikes():
         lines.append(
             f"#{i} {_emoji(bias)} {r['symbol']:<11} "
             f"2d {_mult(r['spike_2d'])} · 5d {_mult(r['spike_5d'])} · "
-            f"10d {_mult(r['spike_10d'])}  {bias}{p52}"
+            f"10d {_mult(r['spike_10d'])} · vol {_mult(r.get('vol_spike'))}  "
+            f"{bias}{p52}"
         )
     lines.append("")
     lines.append("Changes:")

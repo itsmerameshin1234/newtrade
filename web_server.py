@@ -237,7 +237,8 @@ def api_bigplayer():
         d['avg_total_10d'] = a.get('avg_total')
         sp = spikes.get(d['symbol'], {})
         for k in ('spike_2d', 'spike_5d', 'spike_10d',
-                  'avg_cr_2d', 'avg_cr_5d', 'avg_cr_10d', 'bars_elapsed'):
+                  'avg_cr_2d', 'avg_cr_5d', 'avg_cr_10d', 'bars_elapsed',
+                  'vol_spike', 'avg_vol_10d'):
             d[k] = sp.get(k)
         d['indices'] = INDEX_MAP.get(d['symbol'], '')
         sm = sym_meta.get(d['symbol'], {})

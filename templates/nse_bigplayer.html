@@ -83,7 +83,7 @@
         <th onclick="srt(1)">Index</th>
         <th onclick="srt(2)">Big Bars</th><th onclick="srt(3)">Buy ₹Cr</th><th onclick="srt(4)">Sell ₹Cr</th>
         <th onclick="srt(5)">Net ₹Cr</th><th onclick="srt(6)">Bias</th>
-        <th id="avg-th" onclick="srt(7)">5d Avg ₹Cr</th><th onclick="srt(8)">Spike</th><th onclick="srt(9)">52W %</th><th onclick="srt(10)">Buy / Sell Split</th>
+        <th id="avg-th" onclick="srt(7)">5d Avg ₹Cr</th><th onclick="srt(8)">Spike</th><th onclick="srt(11)">Vol×</th><th onclick="srt(9)">52W %</th><th onclick="srt(10)">Buy / Sell Split</th>
       </tr></thead><tbody id="tb"></tbody></table>
     </div>
   </div>
@@ -133,8 +133,10 @@ const COLORS = {{ colors|tojson }};
 let bpAll=[], fc=null, cc=null, sc=null, mc=null, mvc=null, mpc=null, curSym=null, curDays=1, cd=60;
 let spkLB=5;   // active spike lookback: 2 | 5 | 10 (default 5-day)
 let tsc=-1, tsa=false;   // table sort column (-1 = server order) / ascending
+const VOL_CONFIRM = 1.2; // volume-pace confirmation gate (keep in sync w/ spike.py VOL_CONFIRM)
 const spikeVal = r => r['spike_'+spkLB+'d'];
 const spikeAvg = r => r['avg_cr_'+spkLB+'d'];
+const volSpike = r => (r.vol_spike==null ? null : r.vol_spike);
 const w52pct   = r => { const h=r.week52_high, l=r.week52_low, c=r.last_price;
                         return (h&&l&&c&&h>l) ? Math.max(0,Math.min(100,(c-l)/(h-l)*100)) : null; };
 
@@ -321,7 +323,9 @@ function render(d) {
 }
 
 function renderAlerts() {
-  const spikes = bpAll.filter(r=>spikeVal(r)!=null && spikeVal(r)>=1.5)
+  // Confirmation gate: a ₹Cr spike only counts as "unusual" when volume confirms it.
+  const spikes = bpAll.filter(r=>spikeVal(r)!=null && spikeVal(r)>=1.5
+                              && volSpike(r)!=null && volSpike(r)>=VOL_CONFIRM)
                       .sort((a,b)=>spikeVal(b)-spikeVal(a));
   const asec = document.getElementById('alert-sec');
   if (spikes.length) {
@@ -331,10 +335,11 @@ function renderAlerts() {
       const dtag = r.net_cr>0?'<span class="tag tbuy">BUY</span>':r.net_cr<0?'<span class="tag tsell">SELL</span>':'';
       const sv   = spikeVal(r);
       const scls = sv>=3?'spk-hi':'spk-md';
+      const vv   = volSpike(r);
       return `<div class="ac ${dir}" onclick="openModal('${r.symbol}')">
         <div style="font-weight:700">${r.symbol}</div>
         <div class="sub" style="font-size:11px;margin:2px 0">₹${f(r.total_cr)} Cr</div>
-        <span class="${scls}">${sv}× ${spkLB}d</span> ${dtag}
+        <span class="${scls}">${sv}× ${spkLB}d</span> <span class="spk-md">vol ${vv}×</span> ${dtag}
       </div>`;
     }).join('');
   } else { asec.style.display='none'; }
@@ -369,6 +374,7 @@ function filt() {
         case 8:  return spikeVal(r);
         case 9:  return w52pct(r);
         case 10: return splitPct(r);
+        case 11: return volSpike(r);
       }
     };
     rows = [...rows].sort((a,b) => {
@@ -405,6 +411,11 @@ function filt() {
       <td>${bias}</td>
       <td class="sub">${spikeAvg(r)!=null ? f(spikeAvg(r)) : '—'}</td>
       <td>${spk}</td>
+      <td>${(()=>{ const vv=volSpike(r);
+        if (vv==null) return '<span class="sub">—</span>';
+        const cls = vv>=VOL_CONFIRM ? (vv>=2?'spk-hi':'spk-md') : 'sub';
+        return `<span class="${cls}">${vv}×</span>`;
+      })()}</td>
       <td>${(()=>{ const wp=w52pct(r);
         return wp==null ? '<span class="sub">—</span>'
           : `<span style="color:${wp>=80?'var(--grn)':wp>=50?'var(--yel)':'var(--red)'};font-weight:600">${wp.toFixed(0)}%</span>`;
@@ -632,7 +643,9 @@ async function openModal(sym, resetTf=true) {
       <div class="card" style="padding:8px"><div class="clbl">Buy ₹Cr</div><div class="cval green" style="font-size:16px">${f(rec.buy_cr)}</div></div>
       <div class="card" style="padding:8px"><div class="clbl">Sell ₹Cr</div><div class="cval red" style="font-size:16px">${f(rec.sell_cr)}</div></div>
       <div class="card" style="padding:8px"><div class="clbl">Net ₹Cr</div>
-        <div class="cval ${(rec.net_cr||0)>0?'green':'red'}" style="font-size:16px">${f(rec.net_cr)}</div></div>`;
+        <div class="cval ${(rec.net_cr||0)>0?'green':'red'}" style="font-size:16px">${f(rec.net_cr)}</div></div>
+      <div class="card" style="padding:8px"><div class="clbl">Vol Pace</div>
+        <div class="cval" style="font-size:16px;color:${rec.vol_spike==null?'var(--sub)':rec.vol_spike>=VOL_CONFIRM?'var(--grn)':'var(--sub)'}">${rec.vol_spike==null?'—':rec.vol_spike+'×'}</div></div>`;
 
     const w52h = rec.week52_high, w52l = rec.week52_low;
     const cur  = bars.length ? bars[bars.length - 1].c : rec.last_price;
