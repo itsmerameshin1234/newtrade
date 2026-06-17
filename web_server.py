@@ -17,6 +17,7 @@ from flask import (Blueprint, Flask, jsonify, render_template,
 from symbol_common import symbols as _sc_symbols
 INDEX_MAP = {sym: idx for _, sym, idx in _sc_symbols}
 from spike import compute_spikes
+from vwap import prev_day_vwap_all
 import pytz
 
 LOG_FILE = "/home/ramesh/log/newtrade.log"
@@ -222,6 +223,9 @@ def api_bigplayer():
         ''', syms_list).fetchall():
             sym_meta[r['symbol']] = dict(r)
 
+    # Previous trading day's VWAP per symbol (relative to the page's date).
+    prev_vwap = prev_day_vwap_all(conn, ref_date=today)
+
     # Pace-based spike (today's cumulative ₹Cr vs the symbol's daily budget,
     # normalized for elapsed session bars) for 2d / 5d / 10d lookbacks.
     spikes = compute_spikes(conn, today)
@@ -244,6 +248,7 @@ def api_bigplayer():
         sm = sym_meta.get(d['symbol'], {})
         d['week52_high'] = sm.get('week52_high')
         d['week52_low']  = sm.get('week52_low')
+        d['prev_vwap']   = prev_vwap.get(d['symbol'])
         result.append(d)
 
     return jsonify({

@@ -84,6 +84,7 @@
         <th onclick="srt(2)">Big Bars</th><th onclick="srt(3)">Buy ₹Cr</th><th onclick="srt(4)">Sell ₹Cr</th>
         <th onclick="srt(5)">Net ₹Cr</th><th onclick="srt(6)">Bias</th>
         <th id="avg-th" onclick="srt(7)">5d Avg ₹Cr</th><th onclick="srt(8)">Spike</th><th onclick="srt(11)">Vol×</th><th onclick="srt(9)">52W %</th><th onclick="srt(10)">Buy / Sell Split</th>
+        <th onclick="srt(12)" title="Previous trading day's VWAP (volume-weighted avg price)">Prev VWAP</th>
       </tr></thead><tbody id="tb"></tbody></table>
     </div>
   </div>
@@ -375,6 +376,7 @@ function filt() {
         case 9:  return w52pct(r);
         case 10: return splitPct(r);
         case 11: return volSpike(r);
+        case 12: return r.prev_vwap;
       }
     };
     rows = [...rows].sort((a,b) => {
@@ -425,6 +427,12 @@ function filt() {
         <div class="split-bg"><div class="sb sb-b" style="width:${bw}%"></div><div class="sb sb-s" style="width:${sw}%"></div></div>
         <span class="red" style="font-size:10px;width:28px;text-align:right">${sw}%</span>
       </div></td>
+      <td>${(()=>{ const vw=r.prev_vwap;
+        if (vw==null) return '<span class="sub">—</span>';
+        const lp=r.last_price;
+        const cls = lp==null ? '' : (lp>=vw ? 'green' : 'red');
+        return `<span class="${cls}">${f(vw)}</span>`;
+      })()}</td>
     </tr>`;
   }).join('');
 }
