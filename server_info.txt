@@ -1,26 +1,128 @@
 NSE Dashboard — Server Info
 ===========================
 
-URLs
-----
-http://debdesktop.duckdns.org:8080/
-http://debdesktop.duckdns.org:8080/bigplayer
-http://debdesktop.duckdns.org:8080/pushlog
-http://debdesktop.duckdns.org:8080/log
+REMOTE ACCESS (updated 2026-08-10)
+----------------------------------
+Public URL — works in ANY browser, nothing installed:
+    https://debdesktop.tail1d8f7.ts.net/
+    https://debdesktop.tail1d8f7.ts.net/bigplayer
+    https://debdesktop.tail1d8f7.ts.net/pushlog
+    https://debdesktop.tail1d8f7.ts.net/log
 
-DuckDNS
--------
-Domain  : debdesktop.duckdns.org
-Updates : every 5 minutes (both IPv4 and IPv6)
-IPv4    : 49.37.209.37
-IPv6    : 2409:4091:a026:fe31:72f3:95ff:fe0d:78bd
+Private URL — requires the Tailscale app, signed in as itsmerameshin@gmail.com:
+    http://debdesktop:8080/          (also exposes /terminal/)
+    http://100.79.115.50:8080/       (stable fallback if the name won't resolve)
 
-Server
+Home LAN:
+    http://192.168.31.173:8080/
+
+
+WHY DUCKDNS NO LONGER WORKS FROM OUTSIDE
+----------------------------------------
+The ISP (Jio) is behind carrier-grade NAT — `traceroute -n 8.8.8.8` shows
+hop 2 = 192.0.0.1 (DS-Lite AFTR). The "public" IPv4 reported by ipify is
+shared with other customers and does NOT belong to this router, so
+PORT-FORWARDING 8080 FOR IPv4 IS IMPOSSIBLE. No router setting can fix it.
+
+DuckDNS itself is not broken — duck.sh still updates A and AAAA every 5 min
+and both resolve correctly. IPv6 works, but fails from IPv4-only remote
+networks (office / hotel / public wifi), which is why access was intermittent
+rather than dead. DuckDNS is kept for home-network convenience only.
+
+
+TAILSCALE
+---------
+Node        : debdesktop
+Tailnet IP  : 100.79.115.50  /  fd7a:115c:a1e0::fd36:7333
+MagicDNS    : tail1d8f7.ts.net
+Service     : tailscaled (systemd, enabled) — reconnects automatically on the
+              4pm shutdown / ~7:30am power-on cycle. No cron entry needed.
+
+Funnel (the public URL) was enabled with:
+    sudo tailscale funnel --bg 8090
+The --bg flag matters: without it the config is torn down the moment the
+terminal exits.
+
+    Status : sudo tailscale funnel status
+    Disable: sudo tailscale funnel reset
+
+
+SETTING THIS UP ON A NEW MACHINE (full recipe)
+----------------------------------------------
+1. Install Tailscale:
+       curl -fsSL https://tailscale.com/install.sh | sudo sh
+
+2. Join the tailnet (prints a login URL — sign in as itsmerameshin@gmail.com):
+       sudo tailscale up
+
+3. Confirm it came up:
+       tailscale status          # should list the node + your email
+       tailscale ip -4           # the 100.x.y.z address
+
+4. Expose the dashboard publicly (Flask's port, NOT nginx's — see warning above):
+       sudo tailscale funnel --bg 8090
+   The --bg is required. Without it the funnel dies when the shell exits.
+   First run also fetches a Let's Encrypt cert (~15s) and may print a URL to
+   enable Funnel for the tailnet — approve it, then re-run.
+
+5. IMPORTANT — in the admin console, disable key expiry:
+       login.tailscale.com/admin/machines -> <node> -> ... -> Disable key expiry
+   Node keys expire by default (check the console for the current window).
+   When the key expires the node drops off the tailnet and Funnel stops
+   serving with it — the public URL dies too, not just the app access.
+   Re-authenticating needs a browser ON that machine, so do this up front.
+
+6. On phones/laptops: install the Tailscale app, sign in with the same account.
+   ONLY needed for the private http://<node>:8080 URL. The public Funnel URL
+   needs nothing installed.
+
+Verify from outside — forces the real public path, not the local shortcut.
+Two steps, because the ingress IP must be looked up first:
+       dig +short <host>.<tailnet>.ts.net @8.8.8.8        # -> e.g. 103.84.155.153
+       curl -s -o /dev/null -w '%{http_code}\n' \
+            --resolve <host>.<tailnet>.ts.net:443:<that-ip> \
+            https://<host>.<tailnet>.ts.net/               # expect 200
+       # repeat for /terminal/ — MUST be 404, not a shell
+
+Troubleshooting seen in practice:
+  - Samsung Internet failed until private/incognito mode: the browser
+    downgraded TLS to 1.0/1.1, which Tailscale rejects (needs 1.2+).
+    Fix: clear site data, turn off Data saving mode.
+  - `tailscale funnel status` saying "No serve config" after you ran it
+    = you forgot --bg.
+
+*** SECURITY: Funnel points at Flask on 127.0.0.1:8090, deliberately         ***
+*** BYPASSING nginx on 8080. nginx is the only thing that maps /terminal/    ***
+*** to wetty, so the shell is structurally unreachable from the internet     ***
+*** (verified: /terminal/ returns 404 via the public ingress).               ***
+*** DO NOT repoint Funnel at 8080 without adding authentication first.       ***
+
+Note: the public URL has NO login — anyone with the link can read the
+dashboard. This is a deliberate choice.
+
+TODO: login.tailscale.com/admin/machines -> debdesktop -> ... -> Disable key
+expiry. Otherwise the node key expires in ~180 days and BOTH URLs go dark
+until someone logs in at a browser on this machine.
+
+
+SERVER
 ------
-Port    : 8080
-App     : Flask / web_server.py (standalone)
-Listens : *:8080 — accepts both IPv4 and IPv6 connections
+App     : Flask / web_server.py — listens *:8090
+nginx   : listens *:8080; / -> 127.0.0.1:8090, /terminal/ -> 127.0.0.1:4200 (wetty)
+DB      : nse_intraday.db (SQLite, WAL mode)
 
+PERFORMANCE NOTE: every query filters with DATE(t)=... which defeats the
+idx_bars_t index and forces a FULL TABLE SCAN. Page cost therefore grows
+linearly with total history retained (as of 2026-08-10: 51 days / 1.8M rows /
+338MB, /api/bigplayer ~11s). Rewriting to range predicates
+(t >= 'YYYY-MM-DD' AND t < next-day) uses the index and is ~14x faster.
+
+
+DuckDNS (home network only)
+---------------------------
+Domain  : debdesktop.duckdns.org
+Updates : every 5 minutes (both IPv4 and IPv6), via ~/duckdns/duck.sh
+Note    : the IPv4 is CGNAT-shared and the IPv6 prefix rotates.
 
 
 Nifty 50	https://www.nseindia.com/api/equity-stockIndices?index=NIFTY%2050

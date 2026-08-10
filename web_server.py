@@ -18,6 +18,7 @@ from symbol_common import symbols as _sc_symbols
 INDEX_MAP = {sym: idx for _, sym, idx in _sc_symbols}
 from spike import compute_spikes
 from vwap import prev_day_vwap_all
+from dbdates import day_bounds, date_span, last_trading_dates
 import pytz
 
 LOG_FILE = "/home/ramesh/log/newtrade.log"
@@ -52,7 +53,7 @@ def effective_date(conn):
     """Return today if it has bar data, else fall back to the last date that does."""
     today = today_ist()
     row = conn.execute(
-        "SELECT MAX(DATE(t)) FROM bars WHERE DATE(t) <= ?", (today,)
+        "SELECT substr(MAX(t),1,10) FROM bars WHERE t < ?", (day_bounds(today)[1],)
     ).fetchone()
     return row[0] if row and row[0] else today
 
@@ -80,6 +81,7 @@ def serve_css():
 def api_summary():
     conn  = get_conn()
     today = effective_date(conn)
+    lo, hi = day_bounds(today)
 
     mkt = conn.execute('''
         SELECT COUNT(DISTINCT symbol) as symbols,
@@ -87,8 +89,8 @@ def api_summary():
                ROUND(SUM(CASE WHEN bs=1  AND ac>=1 THEN ac ELSE 0 END), 2)   as big_buy_cr,
                ROUND(SUM(CASE WHEN bs=-1 AND ac>=1 THEN ac ELSE 0 END), 2)   as big_sell_cr,
                MAX(t)                                                          as last_bar
-        FROM bars WHERE DATE(t) = ?
-    ''', (today,)).fetchone()
+        FROM bars WHERE t >= ? AND t < ?
+    ''', (lo, hi)).fetchone()
 
     syms = conn.execute('''
         SELECT b.symbol,
@@ -98,7 +100,7 @@ def api_summary():
                ROUND(MAX(b.h), 2)  as day_high,
                ROUND(MIN(b.l), 2)  as day_low,
                (SELECT ROUND(c,2) FROM bars b2
-                WHERE b2.symbol=b.symbol AND DATE(b2.t)=?
+                WHERE b2.symbol=b.symbol AND b2.t >= ? AND b2.t < ?
                 ORDER BY b2.t DESC LIMIT 1)              as last_price,
                SUM(b.v)            as total_vol,
                ROUND(SUM(b.ac), 2) as total_cr,
@@ -106,10 +108,10 @@ def api_summary():
                ROUND(SUM(CASE WHEN b.bs=-1 AND b.ac>=1 THEN b.ac ELSE 0 END), 2) as big_sell_cr
         FROM bars b
         LEFT JOIN symbol_info si ON b.symbol = si.symbol
-        WHERE DATE(b.t) = ?
+        WHERE b.t >= ? AND b.t < ?
         GROUP BY b.symbol
         ORDER BY total_cr DESC
-    ''', (today, today)).fetchall()
+    ''', (lo, hi, lo, hi)).fetchall()
 
     conn.close()
     sym_list = []
@@ -130,13 +132,12 @@ def api_summary():
 def api_bigplayer():
     conn  = get_conn()
     today = effective_date(conn)
+    lo, hi = day_bounds(today)
 
     # Last 10 distinct trading dates (excluding today)
-    hist_dates = [r[0] for r in conn.execute(
-        "SELECT DISTINCT DATE(t) FROM bars WHERE DATE(t)<? ORDER BY DATE(t) DESC LIMIT 10",
-        (today,)
-    ).fetchall()]
-    hist_days = len(hist_dates)
+    hist_dates = last_trading_dates(conn, today, 10)
+    hist_days  = len(hist_dates)
+    h_lo, h_hi = date_span(hist_dates)
 
     # Today's big-player summary per symbol
     today_bp = conn.execute('''
@@ -150,11 +151,11 @@ def api_bigplayer():
                ROUND(SUM(CASE WHEN bs=1 THEN ac ELSE 0 END)
                    - SUM(CASE WHEN bs=-1 THEN ac ELSE 0 END), 2)                  as net_cr,
                (SELECT ROUND(c,2) FROM bars b2
-                WHERE b2.symbol=bars.symbol AND DATE(b2.t)=?
+                WHERE b2.symbol=bars.symbol AND b2.t >= ? AND b2.t < ?
                 ORDER BY b2.t DESC LIMIT 1)                                       as last_price
-        FROM bars WHERE DATE(t)=? AND ac>=1
+        FROM bars WHERE t >= ? AND t < ? AND ac>=1
         GROUP BY symbol ORDER BY total_cr DESC
-    ''', (today, today)).fetchall()
+    ''', (lo, hi, lo, hi)).fetchall()
 
     # 10-day per-symbol averages
     avg10 = {}
@@ -166,14 +167,15 @@ def api_bigplayer():
                    ROUND(AVG(d_sell),  2) as avg_sell,
                    ROUND(AVG(d_total), 2) as avg_total
             FROM (
-                SELECT symbol, DATE(t) as dt,
+                SELECT symbol, substr(t,1,10) as dt,
                        SUM(CASE WHEN bs=1  THEN ac ELSE 0 END) as d_buy,
                        SUM(CASE WHEN bs=-1 THEN ac ELSE 0 END) as d_sell,
                        SUM(ac)                                  as d_total
-                FROM bars WHERE ac>=1 AND DATE(t) IN ({ph})
+                FROM bars
+                WHERE ac>=1 AND t >= ? AND t < ? AND substr(t,1,10) IN ({ph})
                 GROUP BY symbol, dt
             ) GROUP BY symbol
-        ''', hist_dates).fetchall():
+        ''', [h_lo, h_hi] + hist_dates).fetchall():
             avg10[r['symbol']] = dict(r)
 
     # Per-day history (for the 10-day grid / sparklines)
@@ -181,22 +183,23 @@ def api_bigplayer():
     if hist_dates:
         ph = ','.join('?' * len(hist_dates))
         hist = conn.execute(f'''
-            SELECT symbol, DATE(t) as dt,
+            SELECT symbol, substr(t,1,10) as dt,
                    ROUND(SUM(CASE WHEN bs=1  THEN ac ELSE 0 END), 2) as buy_cr,
                    ROUND(SUM(CASE WHEN bs=-1 THEN ac ELSE 0 END), 2) as sell_cr,
                    ROUND(SUM(ac), 2)                                   as total_cr
-            FROM bars WHERE ac>=1 AND DATE(t) IN ({ph})
+            FROM bars
+            WHERE ac>=1 AND t >= ? AND t < ? AND substr(t,1,10) IN ({ph})
             GROUP BY symbol, dt ORDER BY symbol, dt
-        ''', hist_dates).fetchall()
+        ''', [h_lo, h_hi] + hist_dates).fetchall()
 
     # Intraday per-minute flow (all symbols, today)
     timeline = conn.execute('''
         SELECT t,
                ROUND(SUM(CASE WHEN bs=1  THEN ac ELSE 0 END), 2) as buy_cr,
                ROUND(SUM(CASE WHEN bs=-1 THEN ac ELSE 0 END), 2) as sell_cr
-        FROM bars WHERE DATE(t)=? AND ac>=1
+        FROM bars WHERE t >= ? AND t < ? AND ac>=1
         GROUP BY t ORDER BY t
-    ''', (today,)).fetchall()
+    ''', (lo, hi)).fetchall()
 
     # Cumulative net flow per symbol (top 15)
     top15 = [r['symbol'] for r in today_bp[:15]]
@@ -204,8 +207,8 @@ def api_bigplayer():
     for sym in top15:
         rows = conn.execute('''
             SELECT t, ROUND(bs * ac, 4) as net_bar
-            FROM bars WHERE symbol=? AND DATE(t)=? AND ac>=1 ORDER BY t
-        ''', (sym, today)).fetchall()
+            FROM bars WHERE symbol=? AND t >= ? AND t < ? AND ac>=1 ORDER BY t
+        ''', (sym, lo, hi)).fetchall()
         cum, pts = 0.0, []
         for r in rows:
             cum = round(cum + r['net_bar'], 2)
@@ -268,6 +271,7 @@ def api_bigplayer():
 def api_index_flow():
     conn  = get_conn()
     today = effective_date(conn)
+    lo, hi = day_bounds(today)
 
     CODES = ['NI', 'BN', 'FN', 'MS']
 
@@ -287,31 +291,30 @@ def api_index_flow():
                ROUND(SUM(ac), 2)                                   as total_cr,
                ROUND(SUM(CASE WHEN bs=1 THEN ac ELSE -ac END), 2) as net_cr,
                COUNT(*)                                            as big_bars
-        FROM bars WHERE DATE(t)=? AND ac>=1
+        FROM bars WHERE t >= ? AND t < ? AND ac>=1
         GROUP BY symbol
-    ''', (today,)).fetchall()
+    ''', (lo, hi)).fetchall()
 
     # Per-minute per-symbol net flow (for index timeline)
     tl_rows = conn.execute('''
         SELECT t, symbol,
                ROUND(SUM(CASE WHEN bs=1 THEN ac ELSE -ac END), 2) as net_cr
-        FROM bars WHERE DATE(t)=? AND ac>=1
+        FROM bars WHERE t >= ? AND t < ? AND ac>=1
         GROUP BY t, symbol ORDER BY t
-    ''', (today,)).fetchall()
+    ''', (lo, hi)).fetchall()
 
     # 10-day historical total per symbol per day (for index-level spike ratio)
-    hist_dates = [r[0] for r in conn.execute(
-        "SELECT DISTINCT DATE(t) FROM bars WHERE DATE(t)<? ORDER BY DATE(t) DESC LIMIT 10",
-        (today,)
-    ).fetchall()]
+    hist_dates = last_trading_dates(conn, today, 10)
+    h_lo, h_hi = date_span(hist_dates)
     hist_sym_day = {}  # (symbol, dt) -> total_cr
     if hist_dates:
         ph = ','.join('?' * len(hist_dates))
         for r in conn.execute(f'''
-            SELECT symbol, DATE(t) as dt, ROUND(SUM(ac),2) as total_cr
-            FROM bars WHERE ac>=1 AND DATE(t) IN ({ph})
+            SELECT symbol, substr(t,1,10) as dt, ROUND(SUM(ac),2) as total_cr
+            FROM bars
+            WHERE ac>=1 AND t >= ? AND t < ? AND substr(t,1,10) IN ({ph})
             GROUP BY symbol, dt
-        ''', hist_dates).fetchall():
+        ''', [h_lo, h_hi] + hist_dates).fetchall():
             hist_sym_day[(r['symbol'], r['dt'])] = r['total_cr'] or 0
 
     # Build per-index aggregates
@@ -408,20 +411,18 @@ def api_intraday(symbol):
     if days == 1:
         today = effective_date(conn)
         sym_u = symbol.upper()
+        lo, hi = day_bounds(today)
         bars = conn.execute(
             "SELECT t, o, h, l, c, v, ROUND(ac,4) as ac, bs "
-            "FROM bars WHERE symbol=? AND DATE(t)=? ORDER BY t",
-            (sym_u, today)
+            "FROM bars WHERE symbol=? AND t >= ? AND t < ? ORDER BY t",
+            (sym_u, lo, hi)
         ).fetchall()
 
         # Daily big-player ₹Cr budget over the last 2 / 5 / 10 trading dates,
         # used to draw the 2d/5d/10d pace lines in the modal. Use the *global*
         # last-10 dates (not per-symbol) with zero-fill, so these averages match
         # exactly what compute_spikes() uses for the table/push spike numbers.
-        hist_dates = [r[0] for r in conn.execute(
-            "SELECT DISTINCT DATE(t) FROM bars WHERE DATE(t)<? "
-            "ORDER BY DATE(t) DESC LIMIT 10", (today,)
-        ).fetchall()]
+        hist_dates = last_trading_dates(conn, today, 10)
         day_tot = {}
         if hist_dates:
             ph = ','.join('?' * len(hist_dates))

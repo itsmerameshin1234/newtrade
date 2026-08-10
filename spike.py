@@ -23,6 +23,8 @@ Shared by notifier.py (push alerts) and web_server.py (dashboard / API).
 import datetime
 import pytz
 
+from dbdates import day_bounds, date_span, last_trading_dates
+
 IST          = pytz.timezone("Asia/Kolkata")
 SESSION_BARS = 375          # 09:15 → 15:30 = 375 one-minute bars
 LOOKBACKS    = (2, 5, 10)   # day windows to compare against
@@ -60,20 +62,20 @@ def compute_spikes(conn, today: str) -> dict:
         avg_cr_2d/5d/10d, spike_2d/5d/10d  (spike None when below the floor)
     """
     # Last 10 distinct trading dates before today (most-recent first)
-    hist_dates = [r[0] for r in conn.execute(
-        "SELECT DISTINCT DATE(t) FROM bars WHERE DATE(t)<? ORDER BY DATE(t) DESC LIMIT 10",
-        (today,)
-    ).fetchall()]
+    hist_dates = last_trading_dates(conn, today, 10)
+    h_lo, h_hi = date_span(hist_dates)
+    lo, hi     = day_bounds(today)
 
     # Per-symbol, per-day big-player ₹Cr total over those dates
     day_tot: dict = {}
     if hist_dates:
         ph = ','.join('?' * len(hist_dates))
         for r in conn.execute(f'''
-            SELECT symbol, DATE(t) AS dt, ROUND(SUM(ac), 2) AS tot
-            FROM bars WHERE ac>=1 AND DATE(t) IN ({ph})
+            SELECT symbol, substr(t,1,10) AS dt, ROUND(SUM(ac), 2) AS tot
+            FROM bars
+            WHERE ac>=1 AND t >= ? AND t < ? AND substr(t,1,10) IN ({ph})
             GROUP BY symbol, dt
-        ''', hist_dates).fetchall():
+        ''', [h_lo, h_hi] + hist_dates).fetchall():
             day_tot.setdefault(r['symbol'], {})[r['dt']] = r['tot'] or 0
 
     # Per-symbol 10-day average daily volume baseline (total volume, all bars).
@@ -86,7 +88,7 @@ def compute_spikes(conn, today: str) -> dict:
     today_vol = {r['symbol']: (r['cum_v'] or 0)
                  for r in conn.execute(
                      "SELECT symbol, SUM(v) AS cum_v FROM bars "
-                     "WHERE DATE(t)=? GROUP BY symbol", (today,)).fetchall()}
+                     "WHERE t >= ? AND t < ? GROUP BY symbol", (lo, hi)).fetchall()}
 
     # Today's cumulative big-player flow + latest bar timestamp per symbol
     today_rows = conn.execute('''
@@ -95,9 +97,9 @@ def compute_spikes(conn, today: str) -> dict:
                SUM(CASE WHEN bs=1  THEN ac ELSE 0 END)        AS buy,
                SUM(CASE WHEN bs=-1 THEN ac ELSE 0 END)        AS sell,
                MAX(t)                                         AS last_t
-        FROM bars WHERE DATE(t)=? AND ac>=1
+        FROM bars WHERE t >= ? AND t < ? AND ac>=1
         GROUP BY symbol
-    ''', (today,)).fetchall()
+    ''', (lo, hi)).fetchall()
 
     out: dict = {}
     for r in today_rows:

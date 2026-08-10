@@ -17,6 +17,7 @@ import pytz
 
 from db_setup import get_connection, log_push
 from spike import compute_spikes, ranked_spikes, DEFAULT_LB
+from dbdates import day_bounds
 
 PUSHBULLET_TOKEN = "o.jf9XoTk0S42G4FkjfhD5PZFiLcWAbj9r"
 IST = pytz.timezone("Asia/Kolkata")
@@ -60,15 +61,15 @@ def _get_top6(today: str) -> list:
                    ROUND(SUM(b.ac), 2)                                    AS total_cr,
                    si.week52_high,
                    si.week52_low,
-                   (SELECT c FROM bars WHERE symbol = b.symbol AND DATE(t) = ?
+                   (SELECT c FROM bars WHERE symbol = b.symbol AND t >= ? AND t < ?
                     ORDER BY t DESC LIMIT 1)                               AS cur_price
             FROM bars b
             LEFT JOIN symbol_info si ON si.symbol = b.symbol
-            WHERE DATE(b.t) = ? AND b.ac >= 1
+            WHERE b.t >= ? AND b.t < ? AND b.ac >= 1
             GROUP BY b.symbol
             ORDER BY total_cr DESC
             LIMIT 6
-        ''', (today, today)).fetchall()
+        ''', day_bounds(today) * 2).fetchall()
     finally:
         conn.close()
 
@@ -247,10 +248,10 @@ def check_and_notify_spikes():
             ph   = ','.join('?' * len(syms))
             for m in conn.execute(f'''
                 SELECT si.symbol, si.week52_high, si.week52_low,
-                       (SELECT c FROM bars WHERE symbol=si.symbol AND DATE(t)=?
+                       (SELECT c FROM bars WHERE symbol=si.symbol AND t>=? AND t<?
                         ORDER BY t DESC LIMIT 1) AS cur_price
                 FROM symbol_info si WHERE si.symbol IN ({ph})
-            ''', [today] + syms).fetchall():
+            ''', list(day_bounds(today)) + syms).fetchall():
                 r = next(x for x in current if x['symbol'] == m['symbol'])
                 r['week52_high'] = m['week52_high']
                 r['week52_low']  = m['week52_low']

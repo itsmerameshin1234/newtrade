@@ -14,6 +14,7 @@ reference date (default: the latest date present in the bars table).
 import sqlite3
 
 from db_setup import get_connection
+from dbdates import day_bounds, last_trading_dates
 
 
 def _resolve_conn(conn):
@@ -41,18 +42,23 @@ def prev_day_vwap_all(conn=None, ref_date=None) -> dict:
     conn, owned = _resolve_conn(conn)
     try:
         if ref_date is None:
-            row = conn.execute("SELECT MAX(DATE(t)) FROM bars").fetchone()
+            row = conn.execute("SELECT substr(MAX(t),1,10) FROM bars").fetchone()
             ref_date = row[0] if row else None
         if ref_date is None:
             return {}
+
+        prev = last_trading_dates(conn, ref_date, 1)
+        if not prev:
+            return {}
+        lo, hi = day_bounds(prev[0])
 
         rows = conn.execute("""
             SELECT symbol,
                    ROUND(SUM((h + l + c) / 3.0 * v) / NULLIF(SUM(v), 0), 2) AS vwap
             FROM bars
-            WHERE DATE(t) = (SELECT MAX(DATE(t)) FROM bars WHERE DATE(t) < ?)
+            WHERE t >= ? AND t < ?
             GROUP BY symbol
-        """, (ref_date,)).fetchall()
+        """, (lo, hi)).fetchall()
 
         return {r[0]: r[1] for r in rows if r[1] is not None}
     finally:
@@ -69,17 +75,22 @@ def prev_day_vwap(symbol: str, conn=None, ref_date=None):
     conn, owned = _resolve_conn(conn)
     try:
         if ref_date is None:
-            row = conn.execute("SELECT MAX(DATE(t)) FROM bars").fetchone()
+            row = conn.execute("SELECT substr(MAX(t),1,10) FROM bars").fetchone()
             ref_date = row[0] if row else None
         if ref_date is None:
             return None
+
+        prev = last_trading_dates(conn, ref_date, 1)
+        if not prev:
+            return None
+        lo, hi = day_bounds(prev[0])
 
         row = conn.execute("""
             SELECT ROUND(SUM((h + l + c) / 3.0 * v) / NULLIF(SUM(v), 0), 2) AS vwap
             FROM bars
             WHERE symbol = ?
-              AND DATE(t) = (SELECT MAX(DATE(t)) FROM bars WHERE DATE(t) < ?)
-        """, (symbol, ref_date)).fetchone()
+              AND t >= ? AND t < ?
+        """, (symbol, lo, hi)).fetchone()
 
         return row[0] if row else None
     finally:
